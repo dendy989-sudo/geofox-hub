@@ -1,0 +1,11 @@
+node_modules/
+.next/
+out/
+dist/
+.vercel/
+.env*
+!.env.example
+*.tsbuildinfo
+*.log
+.DS_Store
+coverage/
