@@ -206,6 +206,13 @@
 .hub-table td { padding: 15px 20px; border-bottom: 1px solid #f0f2f8; vertical-align: middle; }
 .hub-table tbody tr:last-child td { border-bottom: 0; }
 .hub-table tbody tr:hover { background: #fdfcff; }
+.hub-table tbody tr.hub-ticket-awaiting-reply { background: #faf8ff; }
+.hub-table tbody tr.hub-ticket-awaiting-reply:hover { background: #f5f1fc; }
+.hub-table .hub-ticket-awaiting-reply > td:first-child { box-shadow: inset 3px 0 #9b84cc; }
+.hub-ticket-status { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.hub-customer-replied { display: inline-flex; align-items: center; gap: 6px; width: fit-content; padding: 4px 8px; border: 1px solid #d9cdeb; border-radius: 6px; background: #eee7f8; color: #624594; font-size: 11px; font-weight: 650; white-space: nowrap; }
+.hub-customer-replied > span { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: #8664bb; }
+.hub-ticket-reply-hint { color: #6f5b8e; font-size: 11px; }
 .hub-row-title { display: block; max-width: 360px; color: #65738f; font-size: 11px; font-weight: 550; margin-bottom: 5px; overflow-wrap: anywhere; }
 .hub-row-sub { color: #a5afc2; font-size: 9px; overflow-wrap: anywhere; }
 .hub-table-action { border: 0; padding: 4px 0; background: none; color: #a58ccc; font-size: 10px; }

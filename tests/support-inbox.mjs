@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createClient } from "@supabase/supabase-js";
 import ts from "typescript";
 import { supportEmailSettings } from "../lib/integrations/email-config.ts";
 
@@ -18,21 +19,41 @@ globalThis[harnessKey] = state;
 // A small in-memory data source lets the real ticket service exercise page and
 // archive behavior without connecting to production or modifying customer data.
 state.from = () => {
-  const filters = [], orders = [];
+  const filters = [], orders = [], messageFilters = [], messageOrders = [];
+  let select = "", messageLimit = Infinity;
+  const orderRows = (rows, columns) => [...rows].sort((left, right) => {
+    for (const { column, ascending } of columns) {
+      const difference = String(left[column]).localeCompare(String(right[column]));
+      if (difference) return ascending ? difference : -difference;
+    }
+    return 0;
+  });
   return {
-    select() { return this; },
+    select(columns) { select = columns; return this; },
     in(column, values) { filters.push(row => values.includes(row[column])); return this; },
-    eq(column, value) { filters.push(row => row[column] === value); return this; },
-    order(column, { ascending }) { orders.push({ column, ascending }); return this; },
+    eq(column, value) {
+      if (column.startsWith("recent_public_messages.")) messageFilters.push(row => row[column.split(".")[1]] === value);
+      else filters.push(row => row[column] === value);
+      return this;
+    },
+    order(column, { ascending, referencedTable }) {
+      (referencedTable === "recent_public_messages" ? messageOrders : orders).push({ column, ascending });
+      return this;
+    },
+    limit(limit, { referencedTable } = {}) {
+      assert.equal(referencedTable, "recent_public_messages");
+      messageLimit = limit;
+      return this;
+    },
     async range(start, end) {
-      const rows = state.rows.filter(row => filters.every(filter => filter(row))).sort((left, right) => {
-        for (const { column, ascending } of orders) {
-          const difference = String(left[column]).localeCompare(String(right[column]));
-          if (difference) return ascending ? difference : -difference;
-        }
-        return 0;
-      });
-      return { data: rows.slice(start, end + 1), count: rows.length, error: null };
+      const rows = orderRows(state.rows.filter(row => filters.every(filter => filter(row))), orders);
+      const data = rows.slice(start, end + 1).map(row => ({ ...row,
+        recent_public_messages: select.includes("recent_public_messages:")
+          ? orderRows((row.messages || []).filter(message => messageFilters.every(filter => filter(message))), messageOrders)
+            .slice(0, messageLimit).map(message => ({ author_kind: message.author_kind, created_at: message.created_at }))
+          : undefined,
+      }));
+      return { data, count: rows.length, error: null };
     },
   };
 };
@@ -44,7 +65,7 @@ const server = moduleUrl(`
   export function databaseError(error) { throw error; }
 `);
 const emailConfig = new URL("../lib/integrations/email-config.ts", import.meta.url).href;
-const { listTickets } = await import(await compile("../lib/hub/data.ts", {
+const { listTickets, getTicket } = await import(await compile("../lib/hub/data.ts", {
   "server-only": empty, "./server": server,
   "./redact": new URL("../lib/hub/redact.ts", import.meta.url).href,
   "./validation": new URL("../lib/hub/validation.ts", import.meta.url).href,
@@ -58,7 +79,7 @@ const { sendInAppSupportNotification } = await import(await compile("../lib/cust
   "server-only": empty, "@/lib/integrations/email-config": emailConfig,
 }));
 const customer = "10000000-0000-4000-8000-000000000001";
-const context = { capabilities: ["tickets:read", "customers:read"], apps: [{ slug: "novanook", name: "NovaNook" }] };
+const context = { user: { id: "10000000-0000-4000-8000-000000000099" }, capabilities: ["tickets:read", "customers:read"], apps: [{ slug: "novanook", name: "NovaNook" }] };
 const row = (index, status, app = "novanook") => ({
   id: "20000000-0000-4000-8000-" + String(index).padStart(12, "0"), reference: "GFX-" + index,
   app_slug: app, subject: "Help " + index, status, priority: "normal", category: "general", email: "customer@example.test",
@@ -90,6 +111,101 @@ test("archive tabs and full customer history retain exact server-side totals", a
   assert.ok(history.items.some(ticket => ticket.status === "closed"));
   await assert.rejects(() => listTickets(context, "novanook", { status: "invalid" }), error => error.code === "INVALID_INPUT");
   await assert.rejects(() => listTickets({ ...context, capabilities: [] }), error => error.code === "FORBIDDEN");
+});
+
+test("customer follow-ups remain marked through internal notes, reads, and active ticket edits until a public answer", async () => {
+  const originalRows = state.rows;
+  const message = (index, author, internal = false) => ({
+    id: String(index).padStart(3, "0"), author_kind: author, internal,
+    created_at: `2026-11-03T12:00:00.${String(index).padStart(6, "0")}Z`,
+  });
+  try {
+    const ticket = { ...row(1, "open"), messages: [message(1, "customer")] };
+    state.rows = [ticket];
+    const current = async () => (await listTickets(context)).items[0];
+    assert.equal((await current()).customerReplyPending, false, "the opening message is a new request, not a reply");
+    ticket.messages.push(message(2, "staff"), message(3, "customer"));
+    assert.equal((await current()).customerReplyPending, true);
+    assert.equal((await current()).customerReplyAt, message(3, "customer").created_at);
+    ticket.messages.push(message(4, "staff", true), message(5, "staff", true), message(6, "staff", true));
+    ticket.priority = "urgent";
+    ticket.status = "in_progress";
+    ticket.updated_at = "2026-11-03T13:00:00Z";
+    assert.equal((await current()).customerReplyPending, true, "private notes and metadata are not customer-facing replies");
+    assert.equal((await current()).customerReplyAt, message(3, "customer").created_at);
+    ticket.messages.push(message(7, "staff"));
+    assert.equal((await current()).customerReplyPending, false, "a public answer clears the follow-up marker");
+    assert.equal((await current()).customerReplyAt, null);
+    ticket.messages.push(message(8, "customer"));
+    assert.equal((await current()).customerReplyPending, true, "another customer reply marks the ticket again");
+    for (const status of ["resolved", "closed"]) {
+      ticket.status = status;
+      const archived = (await listTickets(context, "novanook", { status })).items[0];
+      assert.equal(archived.customerReplyPending, false, "an explicit archive decision is respected");
+      assert.equal(archived.customerReplyAt, null);
+    }
+    ticket.status = "open";
+    assert.equal((await current()).customerReplyPending, true, "reopening restores attention to an unanswered customer reply");
+    ticket.messages = [message(1, "customer"), message(2, "customer")];
+    assert.equal((await current()).customerReplyPending, true, "a follow-up before the first staff answer is still a reply");
+    ticket.identity_verified = false;
+    assert.equal((await current()).customerReplyPending, false);
+    ticket.identity_verified = true; ticket.source = "web";
+    assert.equal((await current()).customerReplyPending, false, "email/public-form traffic does not impersonate app replies");
+  } finally { state.rows = originalRows; }
+});
+
+test("real PostgREST queries bound public reply metadata per ticket and keep detail markers independent of older message pages", async () => {
+  const newest = "2026-11-03T12:00:00.000003Z";
+  const ticket = { ...row(1, "open"), recent_public_messages: [
+    { author_kind: "customer", created_at: newest },
+    { author_kind: "staff", created_at: "2026-11-03T12:00:00.000002Z" },
+  ] };
+  const oldFrom = state.from, oldRpc = state.rpc;
+  const requests = [];
+  const cursor = { createdAt: "2026-11-03T12:00:00.000001Z", id: "30000000-0000-4000-8000-000000000001" };
+  const client = createClient("https://geofox-fixture.example.test", "test-only-key", {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { fetch: async (input, options) => {
+      const url = new URL(typeof input === "string" ? input : input.url);
+      requests.push(url);
+      if (url.pathname === "/rest/v1/hub_tickets") {
+        assert.match(url.searchParams.get("select"), /recent_public_messages:hub_ticket_messages\(author_kind,created_at\)/);
+        assert.equal(url.searchParams.get("recent_public_messages.internal"), "eq.false");
+        assert.equal(url.searchParams.get("recent_public_messages.order"), "created_at.desc,id.desc");
+        assert.equal(url.searchParams.get("recent_public_messages.limit"), "2");
+        assert.equal(url.searchParams.get("app_slug"), "in.(novanook)");
+        return new Response(JSON.stringify([ticket]), { headers: { "Content-Type": "application/json", "Content-Range": "0-0/1" } });
+      }
+      if (url.pathname === "/rest/v1/hub_audit_log") return Response.json([]);
+      assert.equal(url.pathname, "/rest/v1/rpc/hub_staff_ticket_messages");
+      const params = JSON.parse(options.body);
+      assert.equal(params.p_ticket, ticket.id);
+      assert.equal(params.p_before_created, cursor.createdAt);
+      assert.equal(params.p_before_id, cursor.id);
+      return Response.json({ messages: [{ id: "older", body: "An earlier staff answer", author_name: "Staff", internal: false, created_at: cursor.createdAt, delivery_status: "not_requested" }], nextCursor: null });
+    } },
+  });
+  try {
+    state.from = client.from.bind(client);
+    state.rpc = client.rpc.bind(client);
+    const list = await listTickets(context);
+    assert.equal(list.items[0].customerReplyPending, true);
+    assert.equal(list.total, 1);
+    const listRequest = requests[0];
+    assert.equal(listRequest.searchParams.get("limit"), "5");
+    assert.equal(listRequest.searchParams.get("offset"), "0");
+    assert.equal(listRequest.searchParams.get("order"), "updated_at.desc,id.desc");
+    assert.equal(listRequest.searchParams.get("status"), "in.(open,in_progress,waiting_customer)");
+    const detail = await getTicket(context, ticket.id, { messagesBefore: Buffer.from(JSON.stringify(cursor)).toString("base64url") });
+    assert.equal(detail.customerReplyPending, true);
+    assert.equal(detail.customerReplyAt, newest);
+    assert.equal(detail.messages[0].body, "An earlier staff answer");
+    assert.equal(requests.filter(url => url.pathname === "/rest/v1/hub_tickets").length, 2);
+  } finally {
+    state.from = oldFrom;
+    if (oldRpc === undefined) delete state.rpc; else state.rpc = oldRpc;
+  }
 });
 
 test("outbound mail uses only the public support alias and brand even with stale personal environment settings", async () => {

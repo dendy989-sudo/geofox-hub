@@ -13,6 +13,7 @@ interface TicketRow {
   priority: TicketPriority; category: string; email: string; customer_id: string | null;
   customer_owner_id: string | null; identity_verified: boolean; source: Ticket["source"];
   created_at: string; updated_at: string; assignee_id: string | null;
+  recent_public_messages?: { author_kind: "customer" | "staff" | "guest"; created_at: string }[];
 }
 interface MessageRow {
   id: string; body: string; author_name: string; internal: boolean; created_at: string;
@@ -28,18 +29,26 @@ interface ErrorRow {
   suggested_action: string; source: string; stack: string | null;
 }
 
-const ticketColumns = "id,reference,app_slug,subject,status,priority,category,email,customer_id,customer_owner_id,identity_verified,source,created_at,updated_at,assignee_id";
+const ticketColumns = "id,reference,app_slug,subject,status,priority,category,email,customer_id,customer_owner_id,identity_verified,source,created_at,updated_at,assignee_id,recent_public_messages:hub_ticket_messages(author_kind,created_at)";
 const messageColumns = "id,body,author_name,internal,created_at,delivery_status";
 const auditColumns = "id,app_slug,action,summary,created_at";
 const errorColumns = "id,app_slug,severity,error_code,fingerprint,title,message,route,first_seen,last_seen,occurrence_count,status,customer_id,suggested_action,source,stack";
 
 function mapTicket(context: HubContext, row: TicketRow): Ticket {
+  // The first message opens the request. A later customer message needs staff
+  // attention until a public staff answer or an explicit archive decision.
+  // Internal notes are excluded by the query, so they never clear this signal.
+  const publicMessages = row.recent_public_messages || [];
+  const customerReplyPending = row.source === "app" && row.identity_verified && Boolean(row.customer_owner_id)
+    && row.status !== "resolved" && row.status !== "closed"
+    && publicMessages.length > 1 && publicMessages[0].author_kind === "customer";
   return { id: row.id, reference: row.reference, appSlug: row.app_slug,
     appName: context.apps.find((app) => app.slug === row.app_slug)?.name || row.app_slug,
     subject: row.subject, status: row.status, priority: row.priority, category: row.category,
     email: row.email, customerId: row.customer_id, customerOwnerId: row.customer_owner_id,
     identityVerified: row.identity_verified, source: row.source, createdAt: row.created_at,
-    updatedAt: row.updated_at, assigneeId: row.assignee_id };
+    updatedAt: row.updated_at, assigneeId: row.assignee_id,
+    customerReplyPending, customerReplyAt: customerReplyPending ? publicMessages[0].created_at : null };
 }
 function mapMessage(row: MessageRow): TicketMessage {
   return { id: row.id, body: row.body, authorName: row.author_name, internal: row.internal,
@@ -71,7 +80,11 @@ export async function listTickets(context: HubContext, appSlug: string | null = 
   assertCapability(context, "tickets:read");
   const scope = allowedAppSlugs(context, appSlug);
   if (!scope.length) return { items: [], total: 0, notes: ["No apps are assigned to your staff account."] };
-  let query = getHubService().from("hub_tickets").select(ticketColumns, { count: "exact" }).in("app_slug", scope);
+  let query = getHubService().from("hub_tickets").select(ticketColumns, { count: "exact" }).in("app_slug", scope)
+    .eq("recent_public_messages.internal", false)
+    .order("created_at", { referencedTable: "recent_public_messages", ascending: false })
+    .order("id", { referencedTable: "recent_public_messages", ascending: false })
+    .limit(2, { referencedTable: "recent_public_messages" });
   const status = options.status || "active";
   if (status === "active") query = query.in("status", ["open", "in_progress", "waiting_customer"]);
   else if (status !== "all") query = query.eq("status", checkMember(status, ticketStatuses, "ticket status"));
@@ -103,7 +116,11 @@ export async function getTicket(context: HubContext, idOrReference: string, opti
   if (!isUuid(idOrReference) && !validReference) throw new HubError(400, "INVALID_INPUT", "Enter a valid ticket ID or reference.");
   const db = getHubService();
   const { data: ticket, error } = await db.from("hub_tickets").select(ticketColumns)
-    .eq(validReference ? "reference" : "id", idOrReference).in("app_slug", scope.length ? scope : ["__no_access__"]).maybeSingle();
+    .eq(validReference ? "reference" : "id", idOrReference).in("app_slug", scope.length ? scope : ["__no_access__"])
+    .eq("recent_public_messages.internal", false)
+    .order("created_at", { referencedTable: "recent_public_messages", ascending: false })
+    .order("id", { referencedTable: "recent_public_messages", ascending: false })
+    .limit(2, { referencedTable: "recent_public_messages" }).maybeSingle();
   if (error) databaseError(error);
   if (!ticket) throw new HubError(404, "NOT_FOUND", "This support request is unavailable or outside your app access.");
   assertCapability(context, "tickets:read", ticket.app_slug);

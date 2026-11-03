@@ -1,30 +1,10 @@
 import { HomeAuthReturn } from "@/components/auth/home-auth-return";
-
-function ArrowIcon({ diagonal = false }: { diagonal?: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="arrow-icon">
-      {diagonal ? (
-        <path d="M6 18 18 6M6 6h12v12" />
-      ) : (
-        <path d="M4 12h15m-6-6 6 6-6 6" />
-      )}
-    </svg>
-  );
-}
-
-function FoxMark() {
-  return (
-    <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <path d="m5 5 15 9L35 5l-3 22-12 9L8 27 5 5Z" fill="currentColor" />
-      <path d="m8 13 12 9 12-9-3 13-9 7-9-7-3-13Z" fill="#FBF8F2" />
-      <path d="m15 24 5 3 5-3-5 9-5-9Z" fill="currentColor" />
-    </svg>
-  );
-}
+import { GeofoxMark, Icon } from "@/components/admin/icons";
+import "./home.css";
 
 function BookArtwork() {
   return (
-    <svg className="book-artwork" viewBox="0 0 440 320" fill="none" aria-hidden="true">
+    <svg className="gf-book-artwork" viewBox="0 0 440 320" fill="none" aria-hidden="true">
       <defs>
         <linearGradient id="book-cover" x1="139" y1="71" x2="320" y2="247" gradientUnits="userSpaceOnUse">
           <stop stopColor="#C3B5F2" />
@@ -58,93 +38,55 @@ function BookArtwork() {
 
 export default function HomePage() {
   return (
-    <>
+    <div className="geofox-home">
       <HomeAuthReturn />
-      <a className="skip-link" href="#main-content">Skip to content</a>
-      <div className="site-shell">
-        <header className="site-header">
-          <a className="brand" href="/" aria-label="Geofox Apps home">
-            <span className="brand-mark"><FoxMark /></span>
-            <span>geofox<span className="brand-suffix">apps</span></span>
-          </a>
-          <nav className="nav-links" aria-label="Main navigation">
-            <a href="#apps">Our apps</a>
-            <a href="#company">Our company</a>
-            <a className="nav-support" href="/support">Get support <ArrowIcon /></a>
-            <a className="nav-staff" href="/admin/login">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V6a4 4 0 0 1 8 0v4m-4 4v3" /></svg>
-              Staff sign in
-            </a>
-          </nav>
-        </header>
+      <a className="gf-skip" href="#main-content">Skip to content</a>
+      <header className="gf-header">
+        <div className="gf-container gf-header-inner">
+          <a className="gf-brand" href="/" aria-label="Geofox Apps home"><span className="gf-brand-mark"><GeofoxMark /></span><span>geofox <span className="gf-brand-suffix">apps</span></span></a>
+          <nav className="gf-nav" aria-label="Main navigation"><a href="#apps">Our apps</a><a href="#company">Our company</a><a href="/support">Support</a></nav>
+          <a className="gf-staff" href="/admin/login"><Icon name="lock" size={14} />Staff sign in<Icon name="arrow" size={14} /></a>
+        </div>
+      </header>
 
-        <main id="main-content">
-          <section className="hero" aria-labelledby="hero-title">
-            <div className="hero-copy">
-              <p className="eyebrow"><span className="eyebrow-dot" /> Independent app studio</p>
-              <h1 id="hero-title">Apps for the<br />things you <span className="hero-emphasis">love.</span></h1>
-              <p className="hero-description">A good app makes a little room for what matters. We create thoughtful digital spaces for everyday interests, starting with your next chapter.</p>
-              <div className="hero-actions">
-                <a className="button" href="#apps">Meet our first app <ArrowIcon /></a>
-                <a className="text-link" href="#company">Get to know Geofox</a>
-              </div>
-              <div className="hero-signature">
-                <span className="signature-line" />
-                <p>Fresh ideas. Thoughtfully made.<br /><strong>GEOFOX APPS LLC</strong></p>
-              </div>
+      <main id="main-content" className="gf-container" tabIndex={-1}>
+        <section className="gf-hero" aria-labelledby="hero-title">
+          <div className="gf-hero-copy">
+            <p className="gf-studio-label"><span />INDEPENDENT APP STUDIO</p>
+            <h1 id="hero-title">A little more<br /><span>possibility.</span><br />In your everyday.</h1>
+            <p className="gf-hero-description">Thoughtful apps for the things you love. We bring useful tools and a personal touch to the interests that make life yours.</p>
+            <div className="gf-hero-actions"><a className="gf-button" href="#apps">Explore our apps<Icon name="arrow" size={17} /></a><a className="gf-quiet-link" href="#company">Get to know Geofox<Icon name="chevron" size={14} /></a></div>
+            <div className="gf-studio-note"><span className="gf-note-mark"><Icon name="layers" size={19} /></span><p><strong>Fresh ideas. Thoughtfully made.</strong><span>A home for every app we create.</span></p></div>
+          </div>
+
+          <article id="apps" className="gf-product" aria-labelledby="novanook-title">
+            <div className="gf-product-topline"><span className="gf-kicker">OUR FIRST CHAPTER</span><span className="gf-category"><span />NovaNook</span></div>
+            <div className="gf-product-art"><span className="gf-art-orbit gf-art-orbit-one" /><span className="gf-art-orbit gf-art-orbit-two" /><BookArtwork /><p>Your books. Your own little world.</p></div>
+            <div className="gf-product-body">
+              <div className="gf-product-heading"><div><p className="gf-kicker">FOR THE LOVE OF BOOKS</p><h2 id="novanook-title">Meet NovaNook.</h2></div><span className="gf-product-icon"><Icon name="book" size={23} /></span></div>
+              <p>A personal library with a little magic. Organize your books, follow your reading journey, and create a space that feels like you.</p>
+              <ul className="gf-product-features" aria-label="NovaNook features"><li><Icon name="book" size={14} />Your library</li><li><Icon name="calendar" size={14} />Reading goals</li><li><Icon name="layers" size={14} />Your own style</li></ul>
+              <a className="gf-product-link" href="https://www.mynovanook.com">Explore NovaNook<Icon name="external" size={16} /></a>
             </div>
+          </article>
+        </section>
 
-            <article id="apps" className="app-spotlight" aria-labelledby="novanook-title">
-              <div className="spotlight-art">
-                <div className="spotlight-topline"><span>OUR FIRST CHAPTER</span><span className="spotlight-number">01</span></div>
-                <BookArtwork />
-                <p className="art-caption">A little magic for your reading life.</p>
-              </div>
-              <div className="spotlight-body">
-                <div className="app-title-row">
-                  <div>
-                    <p className="app-category">FOR THE LOVE OF BOOKS</p>
-                    <h2 id="novanook-title">NovaNook</h2>
-                  </div>
-                  <span className="app-symbol" aria-hidden="true">N<span>✦</span></span>
-                </div>
-                <p>Your books, your reading journey, your own little world. Build a personal library, track your progress, and make your reading space feel like you.</p>
-                <div className="feature-tags" aria-label="NovaNook features">
-                  <span>Personal libraries</span><span>Reading goals</span><span>A touch of magic</span>
-                </div>
-                <a className="app-link" href="https://mynovanook.com">Explore NovaNook <ArrowIcon diagonal /></a>
-              </div>
-            </article>
-          </section>
+        <section className="gf-principles" aria-labelledby="principles-title">
+          <div className="gf-section-heading"><p className="gf-kicker">THE GEOFOX APPROACH</p><h2 id="principles-title">Small details. A better everyday.</h2></div>
+          <div className="gf-principle-grid">
+            <article className="gf-principle"><span className="gf-principle-icon"><Icon name="grid" size={21} /></span><h3>Thoughtfully designed</h3><p>Useful tools, clear layouts, and care in the details you use every day.</p></article>
+            <article className="gf-principle"><span className="gf-principle-icon gf-cyan"><Icon name="layers" size={21} /></span><h3>Room to make it yours</h3><p>Personal touches that turn an everyday tool into a space you enjoy.</p></article>
+            <article className="gf-principle"><span className="gf-principle-icon gf-green"><Icon name="ticket" size={21} /></span><h3>Help, close at hand</h3><p>A clear place to ask a question, find your next step, and keep in touch.</p></article>
+          </div>
+        </section>
 
-          <section id="company" className="company-section" aria-labelledby="company-title">
-            <div className="section-label"><span>THE COMPANY BEHIND THE APPS</span><span className="section-rule" /></div>
-            <div className="company-grid">
-              <div className="company-copy">
-                <p className="eyebrow">Hello, we’re Geofox.</p>
-                <h2 id="company-title">Small details.<br />More possibilities.</h2>
-                <p>GEOFOX APPS LLC is an independent software company and the creator of NovaNook. We bring practical tools and personal expression together, with care for how an app looks, feels, and fits into your day.</p>
-                <p>NovaNook is our first chapter. This is the place to discover what we make next—and find help along the way.</p>
-              </div>
-              <aside className="support-card" aria-labelledby="support-title">
-                <span className="support-icon" aria-hidden="true">
-                  <svg viewBox="0 0 32 32" fill="none"><path d="M8 24 4 28V8a4 4 0 0 1 4-4h16a4 4 0 0 1 4 4v12a4 4 0 0 1-4 4H8Z" /><path d="M10 11h12M10 17h8" /></svg>
-                </span>
-                <p className="eyebrow">A little help, right here</p>
-                <h2 id="support-title">Let’s find your<br />next step.</h2>
-                <p>Looking for help with a Geofox app? Start with our support center to find the right place to go.</p>
-                <a className="button button-secondary" href="/support">Visit support center <ArrowIcon /></a>
-              </aside>
-            </div>
-          </section>
-        </main>
+        <section id="company" className="gf-company" aria-labelledby="company-title">
+          <div className="gf-company-copy"><p className="gf-kicker">THE COMPANY BEHIND THE APPS</p><h2 id="company-title">Hello, we’re Geofox.</h2><p>GEOFOX APPS LLC is an independent software company and the creator of NovaNook. We build digital experiences that bring practical tools and personal expression together.</p><p>NovaNook is our first chapter. We’re making room for what comes next.</p><div className="gf-company-signature"><span><GeofoxMark /></span><strong>GEOFOX APPS LLC<small>Thoughtful apps. Everyday possibilities.</small></strong></div></div>
+          <aside className="gf-support" aria-labelledby="support-title"><span className="gf-support-icon"><Icon name="ticket" size={23} /></span><p className="gf-kicker">WE’RE HERE TO HELP</p><h2 id="support-title">Let’s find your<br />next step.</h2><p>Have a question about a Geofox app? Our support center brings you to the right place.</p><a className="gf-button" href="/support">Visit support center<Icon name="arrow" size={16} /></a><a className="gf-support-tickets" href="https://www.mynovanook.com/support.html">Already use NovaNook? View your tickets<Icon name="external" size={13} /></a></aside>
+        </section>
+      </main>
 
-        <footer className="site-footer">
-          <div className="footer-company"><span className="footer-mark"><FoxMark /></span><p>GEOFOX APPS LLC<span>Thoughtful apps for everyday interests.</span></p></div>
-          <div className="footer-links"><a href="/support">Support</a><a href="/admin/login">Staff sign in <ArrowIcon diagonal /></a></div>
-          <p className="copyright">© {new Date().getFullYear()} GEOFOX APPS LLC. All rights reserved.</p>
-        </footer>
-      </div>
-    </>
+      <footer className="gf-footer"><div className="gf-container gf-footer-inner"><a className="gf-brand gf-footer-brand" href="/" aria-label="Geofox Apps home"><span className="gf-brand-mark"><GeofoxMark /></span><span>geofox <span className="gf-brand-suffix">apps</span></span></a><nav aria-label="Footer navigation"><a href="#apps">Our apps</a><a href="/support">Support</a><a href="/admin/login">Staff sign in<Icon name="external" size={12} /></a></nav><p>© {new Date().getFullYear()} GEOFOX APPS LLC. All rights reserved.</p></div></footer>
+    </div>
   );
 }

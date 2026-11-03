@@ -9,6 +9,11 @@ import { CustomersPanel } from "./customers";
 const statuses: TicketStatus[] = ["open", "in_progress", "waiting_customer", "resolved", "closed"];
 const priorities: TicketPriority[] = ["low", "normal", "high", "urgent"];
 
+function CustomerReplyBadge({ ticket }: { ticket: Ticket }) {
+  if (!ticket.customerReplyPending) return null;
+  return <span className="hub-customer-replied" title={ticket.customerReplyAt ? `Customer replied ${date(ticket.customerReplyAt)}` : "A customer follow-up needs your reply"}><span aria-hidden="true" />Customer replied</span>;
+}
+
 function TicketConversation({ ticket: initialTicket, props, refresh, openCustomer }: { ticket: TicketDetail; props: PanelProps; refresh: () => void; openCustomer: (appSlug: string, id: string) => void }) {
   const [ticket, setTicket] = useState(initialTicket);
   const [status, setStatus] = useState(ticket.status);
@@ -43,6 +48,7 @@ function TicketConversation({ ticket: initialTicket, props, refresh, openCustome
       const latest = await apiRequest<TicketDetail>(`/api/admin/tickets/${encodeURIComponent(ticket.id)}`, { signal: controller.signal });
       if (controller.signal.aborted) return;
       applyLatest(latest);
+      refresh();
       props.notify("Conversation refreshed.");
     } catch (reason) {
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Unable to refresh the conversation. Your draft is still here.");
@@ -111,7 +117,7 @@ function TicketConversation({ ticket: initialTicket, props, refresh, openCustome
   }
   return <section className="hub-card hub-detail" aria-label={`Ticket ${ticket.reference}`}>
     <header className="hub-detail-head"><div><AppBadge slug={ticket.appSlug} apps={props.apps} /><h2>{ticket.subject}</h2><p>{ticket.reference} · {ticket.email} · Created {date(ticket.createdAt)}</p>
-      <div className="hub-detail-meta"><Pill status={ticket.status} /><Pill status={ticket.priority} /><span className="hub-row-sub">{label(ticket.category)}</span><Pill status={inApp ? "healthy" : "unknown"}>{inApp ? "Verified app account · replies in app" : "Email support · verify account claims"}</Pill>{inApp && ticket.customerOwnerId && props.can("customers:read") ? <button type="button" className="hub-section-link" onClick={() => openCustomer(ticket.appSlug, ticket.customerOwnerId!)}><Icon name="users" size={14} />View customer profile <Icon name="arrow" size={12} /></button> : !inApp ? <span className="hub-row-sub">No verified app account linked</span> : null}</div>
+      <div className="hub-detail-meta"><CustomerReplyBadge ticket={ticket} /><Pill status={ticket.status} /><Pill status={ticket.priority} /><span className="hub-row-sub">{label(ticket.category)}</span><Pill status={inApp ? "healthy" : "unknown"}>{inApp ? "Verified app account · replies in app" : "Email support · verify account claims"}</Pill>{inApp && ticket.customerOwnerId && props.can("customers:read") ? <button type="button" className="hub-section-link" onClick={() => openCustomer(ticket.appSlug, ticket.customerOwnerId!)}><Icon name="users" size={14} />View customer profile <Icon name="arrow" size={12} /></button> : !inApp ? <span className="hub-row-sub">No verified app account linked</span> : null}</div>
     </div><div className="hub-ticket-actions"><button type="button" className="hub-button secondary small" aria-label="Refresh conversation" title="Refresh conversation" aria-busy={busy === "refresh"} disabled={props.preview || Boolean(busy)} onClick={refreshConversation}><Icon name="refresh" size={14} className={busy === "refresh" ? "hub-spinning" : undefined} />{busy === "refresh" ? "Refreshing…" : "Refresh"}</button></div></header>
     <div className="hub-detail-body"><ErrorBanner error={error} />
       <div className="hub-inline-fields" style={{ marginBottom: 23 }}><div className="hub-field"><label htmlFor="ticket-status">Status</label><select id="ticket-status" value={status} disabled={!writable || Boolean(busy)} onChange={(event) => setStatus(event.target.value as TicketStatus)}>{statuses.map((value) => <option key={value} value={value}>{label(value)}</option>)}</select></div><div className="hub-field"><label htmlFor="ticket-priority">Priority</label><select id="ticket-priority" value={priority} disabled={!writable || Boolean(busy)} onChange={(event) => setPriority(event.target.value as TicketPriority)}>{priorities.map((value) => <option key={value} value={value}>{label(value)}</option>)}</select></div><button type="button" className="hub-button secondary" disabled={!writable || Boolean(busy) || (status === ticket.status && priority === ticket.priority)} onClick={save}>{busy === "save" ? "Saving…" : "Save details"}</button></div>
@@ -155,11 +161,11 @@ export function TicketsPanel(props: PanelProps) {
   }, [selected, customerTarget]);
   function filter(nextStatus: string) { setStatus(nextStatus); setOffset(0); }
   function backToInbox() {
-    const ticketId = selected;
     setSelected(null); setCustomerTarget(null);
+    list.reload();
     window.requestAnimationFrame(() => {
-      const button = ticketId ? document.getElementById(`ticket-open-${ticketId}`) : null;
-      if (button) button.focus(); else document.getElementById("ticket-search")?.focus();
+      // The latest reply may move the ticket to another page or folder.
+      document.getElementById("ticket-search")?.focus();
     });
   }
 
@@ -193,7 +199,7 @@ export function TicketsPanel(props: PanelProps) {
     </div>
     <Card title={view === "active" ? "Active tickets" : `${label(view)} tickets`} subtitle={view === "active" ? "Open, in progress, and waiting for a customer · 5 per page" : "Archived conversations · 5 per page"} action={<Icon name="ticket" size={17} />}>
       {list.loading ? <Loading /> : tickets.length ? <div className="hub-table-scroll"><table className="hub-table"><thead><tr><th>Ticket</th><th>App</th><th>Status</th><th>Priority</th><th>Updated</th><th><span className="hub-sr-only">Open ticket</span></th></tr></thead><tbody>
-        {tickets.map(ticket => <tr key={ticket.id}><td><span className="hub-row-title">{ticket.subject}</span><span className="hub-row-sub">{ticket.reference} · {ticket.email}</span></td><td><AppBadge slug={ticket.appSlug} apps={props.apps} /></td><td><Pill status={ticket.status} /></td><td><Pill status={ticket.priority} /></td><td className="hub-no-wrap">{date(ticket.updatedAt, true)}</td><td><button id={`ticket-open-${ticket.id}`} type="button" className="hub-table-action" onClick={() => setSelected(ticket.id)}>Open <span className="hub-sr-only">{ticket.reference}</span></button></td></tr>)}
+        {tickets.map(ticket => <tr key={ticket.id} className={ticket.customerReplyPending ? "hub-ticket-awaiting-reply" : undefined}><td><span className="hub-row-title">{ticket.subject}</span><span className="hub-row-sub">{ticket.reference} · {ticket.email}</span></td><td><AppBadge slug={ticket.appSlug} apps={props.apps} /></td><td><div className="hub-ticket-status"><CustomerReplyBadge ticket={ticket} />{ticket.customerReplyPending ? <span className="hub-ticket-reply-hint">Needs your reply</span> : null}<Pill status={ticket.status} /></div></td><td><Pill status={ticket.priority} /></td><td className="hub-no-wrap">{date(ticket.updatedAt, true)}</td><td><button id={`ticket-open-${ticket.id}`} type="button" className="hub-table-action" onClick={() => setSelected(ticket.id)}>Open <span className="hub-sr-only">{ticket.reference}</span></button></td></tr>)}
       </tbody></table></div> : <Empty icon="ticket" title={search || (view === "active" && status !== "active") ? "No tickets match these filters" : `No ${view} tickets`} description={listNotes(list.data, props.preview, `${view} support tickets`)} />}
     </Card>
     {list.data ? <><Pagination offset={offset} limit={pageSize} total={list.data.total} loaded={tickets.length} disabled={list.loading} onPage={setOffset} /><p className="hub-inbox-count" aria-live="polite">{count(list.data.total)} {view} {list.data.total === 1 ? "ticket" : "tickets"}{search ? " matching your search" : ""}</p></> : null}
