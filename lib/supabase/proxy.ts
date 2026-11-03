@@ -7,7 +7,8 @@ export async function updateSession(request: NextRequest) {
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
   const config = getSupabaseConfig();
   if (!config || request.nextUrl.pathname === "/admin/preview") return response;
-  const supabase = createServerClient(config.url, config.key, {
+  try {
+    const supabase = createServerClient(config.url, config.key, {
     cookies: {
       getAll() { return request.cookies.getAll(); },
       setAll(values) {
@@ -17,7 +18,8 @@ export async function updateSession(request: NextRequest) {
         response.headers.set("Cache-Control", "private, no-store, max-age=0");
       },
     },
-  });
-  try { await supabase.auth.getClaims(); } catch { /* Authenticated routes verify again and fail closed. */ }
+    });
+    await supabase.auth.getClaims();
+  } catch { /* Each protected server route separately verifies the user and fails closed. */ }
   return response;
 }
