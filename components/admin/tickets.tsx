@@ -8,7 +8,8 @@ import { Icon } from "./icons";
 const statuses: TicketStatus[] = ["open", "in_progress", "waiting_customer", "resolved", "closed"];
 const priorities: TicketPriority[] = ["low", "normal", "high", "urgent"];
 
-function TicketConversation({ ticket, props, refresh, close }: { ticket: TicketDetail; props: PanelProps; refresh: () => void; close: () => void }) {
+function TicketConversation({ ticket: initialTicket, props, refresh, close }: { ticket: TicketDetail; props: PanelProps; refresh: () => void; close: () => void }) {
+  const [ticket, setTicket] = useState(initialTicket);
   const [status, setStatus] = useState(ticket.status);
   const [priority, setPriority] = useState(ticket.priority);
   const [body, setBody] = useState("");
@@ -19,8 +20,33 @@ function TicketConversation({ ticket, props, refresh, close }: { ticket: TicketD
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const pendingRequest = useRef<{ signature: string; id: string } | null>(null);
+  const refreshRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => refreshRequest.current?.abort(), []);
   const writable = props.can("tickets:write") && !props.preview;
   const inApp = ticket.source === "app" && ticket.identityVerified && Boolean(ticket.customerOwnerId);
+  async function refreshConversation() {
+    if (props.preview || busy || refreshRequest.current) return;
+    const controller = new AbortController();
+    refreshRequest.current = controller;
+    setBusy("refresh"); setError("");
+    try {
+      const latest = await apiRequest<TicketDetail>(`/api/admin/tickets/${encodeURIComponent(ticket.id)}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      const overlap = latest.messages.length ? messages.findIndex(message => message.id === latest.messages[0].id) : -1;
+      const keepEarlier = Boolean(latest.nextMessagesCursor) && overlap >= 0;
+      setMessages(keepEarlier ? [...messages.slice(0, overlap), ...latest.messages] : latest.messages);
+      setOlderCursor(keepEarlier ? olderCursor : latest.nextMessagesCursor);
+      setStatus(value => value === ticket.status ? latest.status : value);
+      setPriority(value => value === ticket.priority ? latest.priority : value);
+      setTicket(latest);
+      props.notify("Conversation refreshed.");
+    } catch (reason) {
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Unable to refresh the conversation. Your draft is still here.");
+    } finally {
+      if (refreshRequest.current === controller) refreshRequest.current = null;
+      if (!controller.signal.aborted) setBusy("");
+    }
+  }
   async function save() {
     if (!writable || busy) return;
     setBusy("save"); setError("");
@@ -66,7 +92,7 @@ function TicketConversation({ ticket, props, refresh, close }: { ticket: TicketD
   return <section className="hub-card hub-detail" aria-label={`Ticket ${ticket.reference}`}>
     <header className="hub-detail-head"><div><AppBadge slug={ticket.appSlug} apps={props.apps} /><h2>{ticket.subject}</h2><p>{ticket.reference} · {ticket.email} · Created {date(ticket.createdAt)}</p>
       <div className="hub-detail-meta"><Pill status={ticket.status} /><Pill status={ticket.priority} /><span className="hub-row-sub">{label(ticket.category)}</span><Pill status={inApp ? "healthy" : "unknown"}>{inApp ? "Verified app account · replies in app" : "Email support · verify account claims"}</Pill>{ticket.customerId ? <span className="hub-row-sub hub-mono">Customer: {ticket.customerId}</span> : null}</div>
-    </div><button type="button" className="hub-icon-button" aria-label="Close ticket" onClick={close}><Icon name="close" size={17} /></button></header>
+    </div><div className="hub-ticket-actions"><button type="button" className="hub-button secondary small" aria-label="Refresh conversation" title="Refresh conversation" aria-busy={busy === "refresh"} disabled={props.preview || Boolean(busy)} onClick={refreshConversation}><Icon name="refresh" size={14} className={busy === "refresh" ? "hub-spinning" : undefined} />{busy === "refresh" ? "Refreshing…" : "Refresh"}</button><button type="button" className="hub-icon-button" aria-label="Close ticket" onClick={close}><Icon name="close" size={17} /></button></div></header>
     <div className="hub-detail-body"><ErrorBanner error={error} />
       <div className="hub-inline-fields" style={{ marginBottom: 23 }}><div className="hub-field"><label htmlFor="ticket-status">Status</label><select id="ticket-status" value={status} disabled={!writable || Boolean(busy)} onChange={(event) => setStatus(event.target.value as TicketStatus)}>{statuses.map((value) => <option key={value} value={value}>{label(value)}</option>)}</select></div><div className="hub-field"><label htmlFor="ticket-priority">Priority</label><select id="ticket-priority" value={priority} disabled={!writable || Boolean(busy)} onChange={(event) => setPriority(event.target.value as TicketPriority)}>{priorities.map((value) => <option key={value} value={value}>{label(value)}</option>)}</select></div><button type="button" className="hub-button secondary" disabled={!writable || Boolean(busy) || (status === ticket.status && priority === ticket.priority)} onClick={save}>{busy === "save" ? "Saving…" : "Save details"}</button></div>
       {inApp && ticket.status === "closed" ? <p className="hub-text-note">This request is closed to customer replies. Reopen it above to continue the conversation, or the customer can create a new request.</p> : null}
