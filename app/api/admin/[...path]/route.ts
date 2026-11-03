@@ -33,7 +33,7 @@ export async function GET(request: Request, route: RouteContext) {
       if (!validUuid(id)) throw new RequestError(400, "CUSTOMER_ID_REQUIRED", "Enter the customer’s full account UUID from NovaNook.");
       return json(await loadCustomer(context, oneApp(app), id));
     }
-    if (name === "tickets") return json(await listTickets(context, app, { status: query.get("status") || undefined, query: query.get("query") || undefined, customerId: query.get("customerId") || undefined, limit: queryNumber(query, "limit", 25), offset: queryNumber(query, "offset", 0) }));
+    if (name === "tickets") return json(await listTickets(context, app, { status: query.get("status") || "active", query: query.get("query") || undefined, customerId: query.get("customerId") || undefined, limit: queryNumber(query, "limit", 5), offset: queryNumber(query, "offset", 0) }));
     if (path[0] === "tickets" && path.length === 2) return json(await getTicket(context, path[1], { messagesBefore: query.get("messagesBefore") }));
     if (name === "errors") return json(await listErrors(context, app, { status: query.get("status") || undefined, customerId: query.get("customerId") || undefined, limit: queryNumber(query, "limit", 25), offset: queryNumber(query, "offset", 0) }));
     if (name === "moderation") {

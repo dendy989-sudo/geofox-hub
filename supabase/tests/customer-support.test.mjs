@@ -88,11 +88,14 @@ test("customer responses omit private messages, staff details, identifiers, audi
   assert.equal(withNote.updatedAt, before.updatedAt);
   assert.equal(withNote.messages.length, before.messages.length);
   await db.query("select public.hub_add_ticket_message($1,$2,'A public support reply',false,'not_requested')", [staff, aliceTicket.id]);
+  // A staff member may have saved their email as a display name in the past.
+  // Public conversation data must never expose it, including historical replies.
+  await db.query("update public.hub_ticket_messages set author_name='owner@geofoxapps.com' where ticket_id=$1 and author_kind='staff'", [aliceTicket.id]);
   const result = await detail(alice, aliceTicket.id);
   assert.deepEqual(Object.keys(result).sort(), ["appName","appSlug","category","createdAt","id","messages","nextMessagesCursor","reference","status","subject","updatedAt"].sort());
   for (const message of result.messages) assert.deepEqual(Object.keys(message).sort(), ["id", "body", "author", "createdAt"].sort());
   const serialized = JSON.stringify(result);
-  for (const privateValue of ["PRIVATE INTERNAL NOTE","Private Staff Name","confirmed@example.test",staff,alice,"audit","assignee"]) assert.equal(serialized.includes(privateValue), false, privateValue);
+  for (const privateValue of ["PRIVATE INTERNAL NOTE","Private Staff Name","owner@geofoxapps.com","confirmed@example.test",staff,alice,"audit","assignee"]) assert.equal(serialized.includes(privateValue), false, privateValue);
   assert.equal(result.messages.at(-1).author, "support");
   assert.notEqual(result.updatedAt, before.updatedAt);
   await denied(() => db.query("insert into public.hub_ticket_messages(ticket_id,body,author_kind,customer_author_id) values($1,'Spoofed author','customer',$2)", [aliceTicket.id, bob]), "42501");
@@ -122,7 +125,9 @@ test("reply retries are idempotent and closed/resolved statuses have deliberate 
   await denied(() => reply(customer, ticket.id, request, "Changed retry"), "P0101");
   await db.query("update public.hub_tickets set status='closed' where id=$1", [ticket.id]);
   assert.equal((await reply(customer, ticket.id, request)).replayed, true);
+  const closedCount = (await one("select count(*)::int n from public.hub_ticket_messages where ticket_id=$1", [ticket.id])).n;
   await denied(() => reply(customer, ticket.id), "P0102");
+  assert.equal((await one("select count(*)::int n from public.hub_ticket_messages where ticket_id=$1", [ticket.id])).n, closedCount);
   for (const [status, expected] of [["waiting_customer","open"], ["in_progress","in_progress"]]) {
     await db.query("update public.hub_tickets set status=$1 where id=$2", [status, ticket.id]);
     assert.equal((await reply(customer, ticket.id)).ticketStatus, expected);

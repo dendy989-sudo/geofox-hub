@@ -12,7 +12,7 @@ Save all needed changes and deploy again. Vercel only applies changed environmen
 
 NovaNook customers use their existing app account for support. Staff can publish replies into the app without an email provider. Email is a separate optional notification channel for those conversations and the response channel for the public Geofox form. Incoming mailbox replies are not automatically imported into tickets.
 
-1. Choose a mailbox you actually monitor. `support@geofoxapps.com` can be a mailbox or a working alias with your current email provider. Merely choosing an address in Resend does not create an inbox.
+1. Use the monitored GoDaddy alias `support@geofoxapps.com` for public support contact. Personal staff login addresses are not support contact details. Merely choosing an address in Resend does not create an inbox.
 2. In Resend, add and verify a domain you own. A dedicated sending subdomain such as `notify.geofoxapps.com` can keep automated email configuration separate from existing company mail.
 3. Add exactly the DNS records Resend provides at your authoritative DNS host. Preserve the existing company mailbox's MX records; receiving email at the root domain is not required for sending through Resend.
 4. Create a **Sending access** API key restricted to that verified sending domain.
@@ -21,10 +21,10 @@ NovaNook customers use their existing app account for support. Staff can publish
 | Name | Value |
 | --- | --- |
 | `RESEND_API_KEY` | The private Resend sending key |
-| `SUPPORT_FROM_EMAIL` | An address on the verified sender domain, for example `Geofox Support <support@notify.geofoxapps.com>` |
-| `SUPPORT_REPLY_TO_EMAIL` | Your working monitored inbox, for example `support@geofoxapps.com` |
+| `SUPPORT_FROM_EMAIL` | `Geofox Support <support@notify.geofoxapps.com>` after the sending subdomain is verified; `support@geofoxapps.com` is also accepted if the root domain is verified |
+| `SUPPORT_REPLY_TO_EMAIL` | If retained in hosting settings, use `support@geofoxapps.com`; the app always uses this alias for reply-to |
 
-The examples are choices, not assertions that those mailboxes/domains already exist. `NEXT_PUBLIC_SUPPORT_EMAIL` is optional; set it only if you want that address displayed on the public website.
+The app normalizes outgoing mail to the Geofox Support display name and permits only the support mailbox on the root or `notify` subdomain. It never substitutes a staff email address. Customer support and privacy contact details use `support@geofoxapps.com`; the website does not display an arbitrary `NEXT_PUBLIC_SUPPORT_EMAIL` value.
 
 After deployment, use a ticket you control to check delivery. A provider accepting an outgoing message does not prove that it reached the recipient's inbox. For in-app tickets, the optional notification contains a generic prompt to return to NovaNook; the conversation remains in the app. It resolves the current verified source email rather than trusting a public form's email or a stale ticket snapshot.
 

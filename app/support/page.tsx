@@ -12,8 +12,7 @@ export const metadata: Metadata = {
 };
 
 export default async function SupportPage() {
-  const candidate = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim();
-  const supportEmail = candidate && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) ? candidate : null;
+  const supportEmail = "support@geofoxapps.com";
   let available = false;
   let apps = [{ slug: "novanook", name: "NovaNook", color: "#a78bfa" }];
   try {
@@ -28,16 +27,11 @@ export default async function SupportPage() {
       <p className="utility-intro">Get help with your app, your account, or a question for Geofox.</p>
       <section className="utility-contact" aria-labelledby="existing-app-support">
         <h2 id="existing-app-support">Already use NovaNook?</h2>
-        <p><a className="text-link" href="https://www.mynovanook.com/support.html">Open My support requests in NovaNook <span aria-hidden="true">↗</span></a> to send a request and read our replies using your existing app account. You don’t need a separate Geofox account.</p>
+        <p><a className="text-link" href="https://www.mynovanook.com/support.html">Submit a ticket or view your requests in NovaNook <span aria-hidden="true">↗</span></a> to send a request and read our replies using your existing app account. Your app account is linked automatically, and all replies stay with your ticket.</p>
         <p>Can’t sign in, or have a question before joining? Use the form below and include an email where we can contact you.</p>
       </section>
       <SupportForm apps={apps} available={available} supportEmail={supportEmail} />
-      {supportEmail ? (
-        <section className="utility-contact" aria-labelledby="company-contact">
-          <h2 id="company-contact">Contact Geofox</h2>
-          <p>For company questions or help finding the right support, email <a className="text-link" href={`mailto:${supportEmail}`}>{supportEmail}</a>.</p>
-        </section>
-      ) : null}
+      <p className="utility-note">For account-access help, privacy requests, or company contact, you can also reach Geofox at <a className="text-link" href={`mailto:${supportEmail}`}>{supportEmail}</a>.</p>
       <p className="utility-note">For NovaNook app information, visit <a className="text-link" href="https://mynovanook.com">mynovanook.com</a>. Safety reports can also be made through NovaNook’s in-app reporting tools.</p>
     </UtilityShell>
   );

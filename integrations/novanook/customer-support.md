@@ -79,6 +79,10 @@ Use cursors exactly as returned; they preserve database microseconds. Lists use
 creation time, newest first, so replies do not move rows between list pages.
 Conversation pages are chronological; the cursor loads earlier messages.
 Staff also receive the latest bounded page and can load earlier history.
+The staff inbox defaults to Active (open, in_progress, waiting_customer), with
+five tickets per page and separate Resolved and Closed filters. Customer profile
+support history explicitly includes all statuses. Archive tabs retain tickets;
+they do not delete conversation history.
 
 Subjects: 3–180 characters on one line. Opening body: 10–12,000 characters.
 Replies: 1–12,000 characters. Text only; no HTML or attachments.
@@ -115,6 +119,9 @@ Origin still needs the same verified bearer identity.
 The optional notification checkbox uses a configured verified sender and the
 source account's current confirmed email. It includes neither conversation text
 nor the ticket subject. Delivery status is separate from message publication.
+Outgoing mail identifies Geofox Support and uses `support@geofoxapps.com` for
+reply-to. A staff login email or personal display name is never used in customer
+mail headers or public conversation author fields.
 
 The public Geofox form remains available for lost access, account appeals,
 deleted accounts and people without an account. It returns a receipt only.

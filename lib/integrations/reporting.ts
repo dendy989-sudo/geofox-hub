@@ -4,6 +4,7 @@ import { listAudit, listErrors, listReviewTasks, listTickets, recordAudit } from
 import type { AttentionItem, ConnectionInfo, CustomerRecord, OperationsData, OverviewData, OverviewMetrics, PaymentRecord, ServiceStatus, TrendPoint } from "@/lib/hub/types";
 import { novaConfigured, novaCustomer, novaOverview, type NovaOverview } from "./novanook";
 import { vercelHealth, websiteHealth } from "./health";
+import { supportEmailSettings } from "./email-config";
 
 interface Summary {
   openTickets: number; openErrors: number;
@@ -28,7 +29,7 @@ export function integrationInfo(context: HubContext): ConnectionInfo[] {
     { id: "hub", name: "Geofox staff & support", state: "connected", description: "Your sign-in, staff membership and app access were verified for this request.", required: true },
     ...context.apps.map(app => ({ id: `app-${app.slug}`, name: `${app.name} data bridge`, state: (app.slug === "novanook" && novaConfigured() ? "connected" : "missing") as ConnectionInfo["state"], description: app.slug === "novanook" ? "Credentials configured here do not prove connectivity. Operations runs the actual bridge check." : "Tickets and app access are available. Add a data adapter before showing customer and account totals.", required: true })),
     ...context.apps.map(app => ({ id: `telemetry-${app.slug}`, name: `${app.name} error collection`, state: (process.env[`${app.slug.replaceAll("-", "_").toUpperCase()}_HUB_INGEST_SECRET`] ? "connected" : "missing") as ConnectionInfo["state"], description: "The hub receiver needs a signing secret; the source app must also deploy its matching reporter settings. A first accepted error confirms delivery. No errors received does not establish app health.", required: false })),
-    { id: "email", name: "Customer reply email", state: process.env.RESEND_API_KEY && process.env.SUPPORT_FROM_EMAIL && process.env.SUPPORT_REPLY_TO_EMAIL ? "connected" : "missing", description: "Optional for in-app conversations. Public-form email replies need a verified Resend sender and monitored reply-to mailbox. Set RESEND_API_KEY, SUPPORT_FROM_EMAIL and SUPPORT_REPLY_TO_EMAIL in Geofox hosting, then redeploy. Incoming mailbox replies are not imported automatically.", required: false },
+    { id: "email", name: "Customer reply email", state: process.env.RESEND_API_KEY && supportEmailSettings() ? "connected" : "missing", description: "Optional for in-app conversations. Public-form email replies need a verified support sender and Resend key. Replies go to support@geofoxapps.com. Set RESEND_API_KEY and SUPPORT_FROM_EMAIL in Geofox hosting, then redeploy. Incoming mailbox replies are not imported automatically.", required: false },
     { id: "vercel", name: "Vercel deployment check", state: process.env.VERCEL_ACCESS_TOKEN && process.env.HUB_VERCEL_PROJECT_ID ? "connected" : "missing", description: "The hub makes read-only deployment requests using VERCEL_ACCESS_TOKEN and the configured team/project IDs. ChatGPT’s Vercel connection does not supply this runtime token. Provider bills and full runtime logs need separate data sources.", required: false },
   ];
 }
@@ -120,7 +121,7 @@ export async function loadCustomer(context: HubContext, appSlug: string, id: str
   const customer = record.customer;
   const [errors, tickets, payments] = await Promise.all([
     listErrors(context, appSlug, { customerId: id, limit: 100 }),
-    listTickets(context, appSlug, { customerId: id, limit: 100 }),
+    listTickets(context, appSlug, { customerId: id, status: "all", limit: 100 }),
     getHubService().from("hub_payments").select("id,provider,status,amount_minor,currency,occurred_at,product").eq("app_slug", appSlug).eq("customer_id", id).order("occurred_at", { ascending: false }).limit(100),
   ]);
   if (payments.error) databaseError(payments.error);

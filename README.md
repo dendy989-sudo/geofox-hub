@@ -41,7 +41,6 @@ Open Vercel → `geofox-hub` → Settings → Environment Variables. Set these f
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Geofox publishable key |
 | `SUPABASE_SECRET_KEY` | Geofox server-only secret key; legacy `SUPABASE_SERVICE_ROLE_KEY` also works |
 | `HUB_RATE_LIMIT_SALT` | Independent random secret of at least 32 characters |
-| `NEXT_PUBLIC_SUPPORT_EMAIL` | Your real monitored support address, if you want it displayed publicly |
 
 Never prefix a privileged key with `NEXT_PUBLIC_`. Do not put real keys in GitHub, a support message, or a chat. `.env.example` lists every supported variable without real credentials.
 
@@ -78,7 +77,7 @@ These integrations are independent; missing ones stay visibly unavailable.
 | Integration | Setup |
 | --- | --- |
 | NovaNook errors | Set a random `NOVANOOK_HUB_INGEST_SECRET` in Geofox. In NovaNook’s server environment set `GEOFOX_HUB_INGEST_URL=https://www.geofoxapps.com/api/ingest/novanook` and matching `GEOFOX_HUB_INGEST_SECRET`. Deploy the reviewed server reporter. See `integrations/telemetry/README.md`. |
-| Support email | In-app replies work without email. For public email replies and optional app notifications, configure a verified Resend domain and set `RESEND_API_KEY`, `SUPPORT_FROM_EMAIL`, and monitored `SUPPORT_REPLY_TO_EMAIL`. Staff explicitly choose email; private notes stay private. |
+| Support email | In-app replies work without email. For public email replies and optional app notifications, configure a verified Resend domain and set `RESEND_API_KEY` plus `SUPPORT_FROM_EMAIL` to the support mailbox on `geofoxapps.com` or `notify.geofoxapps.com`. The display name is always Geofox Support and reply-to is always `support@geofoxapps.com`. Staff explicitly choose email; private notes stay private. |
 | Vercel status | Set `VERCEL_ACCESS_TOKEN`, `VERCEL_TEAM_ID` when applicable, `HUB_VERCEL_PROJECT_ID`, and `NOVANOOK_VERCEL_PROJECT_ID`. The token is used only server-side for deployment reads. Use the narrowest permissions available. |
 | Payments | A verified provider adapter must send production-only payment events with transaction IDs, exact minor units, currency, signed refund values, and the correct trusted customer ID. No revenue is estimated from Pro counts. No historical payments are fabricated or automatically imported. |
 

@@ -6,6 +6,7 @@ import { allowedAppSlugs, assertCapability, databaseError, getHubService, HubErr
 import { redactDiagnostic } from "./redact";
 import { assignableRoles, boundedLimit, boundedOffset, cleanText, customerIdentifier, errorStates, isAppSlug, isUuid, reviewPeriod, ticketCategories, ticketPriorities, ticketStatuses } from "./validation";
 import { decodeCustomerCursor, encodeCustomerCursor } from "@/lib/customer/validation";
+import { supportEmailSettings } from "@/lib/integrations/email-config";
 
 interface TicketRow {
   id: string; reference: string; app_slug: string; subject: string; status: TicketStatus;
@@ -71,7 +72,9 @@ export async function listTickets(context: HubContext, appSlug: string | null = 
   const scope = allowedAppSlugs(context, appSlug);
   if (!scope.length) return { items: [], total: 0, notes: ["No apps are assigned to your staff account."] };
   let query = getHubService().from("hub_tickets").select(ticketColumns, { count: "exact" }).in("app_slug", scope);
-  if (options.status && options.status !== "all") query = query.eq("status", checkMember(options.status, ticketStatuses, "ticket status"));
+  const status = options.status || "active";
+  if (status === "active") query = query.in("status", ["open", "in_progress", "waiting_customer"]);
+  else if (status !== "all") query = query.eq("status", checkMember(status, ticketStatuses, "ticket status"));
   if (options.customerId) {
     const customerId = customerIdentifier(options.customerId);
     if (!customerId) throw new HubError(400, "INVALID_INPUT", "Enter a valid customer ID.");
@@ -84,10 +87,10 @@ export async function listTickets(context: HubContext, appSlug: string | null = 
     if (search) query = query.or(`subject.ilike.%${search}%,email.ilike.%${search}%,reference.ilike.%${search}%`);
   }
   const offset = boundedOffset(options.offset);
-  const { data, error, count } = await query.order("updated_at", { ascending: false }).range(offset, offset + boundedLimit(options.limit) - 1);
+  const { data, error, count } = await query.order("updated_at", { ascending: false }).order("id", { ascending: false }).range(offset, offset + boundedLimit(options.limit, 5) - 1);
   if (error) databaseError(error, "The support queue could not be loaded.");
   return { items: (data || []).map((row) => mapTicket(context, row)), total: count || 0,
-    notes: options.customerId ? ["Customer IDs submitted through the public form are unverified. Verify account ownership before sharing private information or changing an account."] : [] };
+    notes: options.customerId ? ["Signed-in app tickets are linked to a verified account. Customer IDs supplied through the public form are unverified; check ownership before sharing private information or changing an account."] : [] };
 }
 
 export async function getTicket(context: HubContext, idOrReference: string, options: { messagesBefore?: string | null } = {}): Promise<TicketDetail> {
@@ -317,7 +320,7 @@ export async function saveStaff(context: HubContext, input: { userId: string; di
 export async function getSettings(context: HubContext) {
   assertCapability(context, "settings:write");
   return { apps: context.apps, staff: await listStaff(context), mfaRequired: process.env.HUB_REQUIRE_MFA === "true",
-    emailDeliveryConfigured: Boolean(process.env.RESEND_API_KEY && process.env.SUPPORT_FROM_EMAIL && process.env.SUPPORT_REPLY_TO_EMAIL),
+    emailDeliveryConfigured: Boolean(process.env.RESEND_API_KEY && supportEmailSettings()),
     monitoringConfigured: context.apps.map((app) => ({ appSlug: app.slug, connected: app.configured,
       ingestionConfigured: Boolean(process.env[`${app.slug.replaceAll("-", "_").toUpperCase()}_HUB_INGEST_SECRET`]) })),
     checklistTimezone: "UTC", notes: ["Owner access is provisioned explicitly in the Geofox project's SQL Editor.", "App secrets are configured in Vercel environment variables and are never exposed in this page."] };
