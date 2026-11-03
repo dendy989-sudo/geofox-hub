@@ -5,10 +5,12 @@ import type { ActivityItem, ErrorItem, ErrorState, ListResult, ReviewTask, Staff
 import { allowedAppSlugs, assertCapability, databaseError, getHubService, HubError, type HubContext } from "./server";
 import { redactDiagnostic } from "./redact";
 import { assignableRoles, boundedLimit, boundedOffset, cleanText, customerIdentifier, errorStates, isAppSlug, isUuid, reviewPeriod, ticketCategories, ticketPriorities, ticketStatuses } from "./validation";
+import { decodeCustomerCursor, encodeCustomerCursor } from "@/lib/customer/validation";
 
 interface TicketRow {
   id: string; reference: string; app_slug: string; subject: string; status: TicketStatus;
   priority: TicketPriority; category: string; email: string; customer_id: string | null;
+  customer_owner_id: string | null; identity_verified: boolean; source: Ticket["source"];
   created_at: string; updated_at: string; assignee_id: string | null;
 }
 interface MessageRow {
@@ -25,7 +27,7 @@ interface ErrorRow {
   suggested_action: string; source: string; stack: string | null;
 }
 
-const ticketColumns = "id,reference,app_slug,subject,status,priority,category,email,customer_id,created_at,updated_at,assignee_id";
+const ticketColumns = "id,reference,app_slug,subject,status,priority,category,email,customer_id,customer_owner_id,identity_verified,source,created_at,updated_at,assignee_id";
 const messageColumns = "id,body,author_name,internal,created_at,delivery_status";
 const auditColumns = "id,app_slug,action,summary,created_at";
 const errorColumns = "id,app_slug,severity,error_code,fingerprint,title,message,route,first_seen,last_seen,occurrence_count,status,customer_id,suggested_action,source,stack";
@@ -34,7 +36,8 @@ function mapTicket(context: HubContext, row: TicketRow): Ticket {
   return { id: row.id, reference: row.reference, appSlug: row.app_slug,
     appName: context.apps.find((app) => app.slug === row.app_slug)?.name || row.app_slug,
     subject: row.subject, status: row.status, priority: row.priority, category: row.category,
-    email: row.email, customerId: row.customer_id, createdAt: row.created_at,
+    email: row.email, customerId: row.customer_id, customerOwnerId: row.customer_owner_id,
+    identityVerified: row.identity_verified, source: row.source, createdAt: row.created_at,
     updatedAt: row.updated_at, assigneeId: row.assignee_id };
 }
 function mapMessage(row: MessageRow): TicketMessage {
@@ -87,8 +90,11 @@ export async function listTickets(context: HubContext, appSlug: string | null = 
     notes: options.customerId ? ["Customer IDs submitted through the public form are unverified. Verify account ownership before sharing private information or changing an account."] : [] };
 }
 
-export async function getTicket(context: HubContext, idOrReference: string): Promise<TicketDetail> {
+export async function getTicket(context: HubContext, idOrReference: string, options: { messagesBefore?: string | null } = {}): Promise<TicketDetail> {
   assertCapability(context, "tickets:read");
+  let cursor;
+  try { cursor = decodeCustomerCursor(options.messagesBefore || null); }
+  catch { throw new HubError(400, "INVALID_CURSOR", "Refresh the ticket and try loading the conversation again."); }
   const scope = allowedAppSlugs(context);
   const validReference = /^GFX-[A-F0-9]{12}$/.test(idOrReference);
   if (!isUuid(idOrReference) && !validReference) throw new HubError(400, "INVALID_INPUT", "Enter a valid ticket ID or reference.");
@@ -99,12 +105,14 @@ export async function getTicket(context: HubContext, idOrReference: string): Pro
   if (!ticket) throw new HubError(404, "NOT_FOUND", "This support request is unavailable or outside your app access.");
   assertCapability(context, "tickets:read", ticket.app_slug);
   const [messages, audit] = await Promise.all([
-    db.from("hub_ticket_messages").select(messageColumns).eq("ticket_id", ticket.id).order("created_at", { ascending: true }).limit(500),
+    db.rpc("hub_staff_ticket_messages", { p_actor: context.user.id, p_ticket: ticket.id, p_before_created: cursor?.createdAt || null, p_before_id: cursor?.id || null }),
     db.from("hub_audit_log").select(auditColumns).eq("entity_type", "ticket").eq("entity_id", ticket.id).eq("app_slug", ticket.app_slug).order("created_at", { ascending: false }).limit(30),
   ]);
   if (messages.error) databaseError(messages.error);
   if (audit.error) databaseError(audit.error);
-  return { ...mapTicket(context, ticket), messages: (messages.data || []).map(mapMessage), audit: (audit.data || []).map(mapAudit) };
+  if (!messages.data) throw new HubError(503, "DATABASE_UNAVAILABLE", "The ticket conversation could not be loaded.");
+  return { ...mapTicket(context, ticket), messages: (messages.data.messages || []).map(mapMessage),
+    nextMessagesCursor: encodeCustomerCursor(messages.data.nextCursor), audit: (audit.data || []).map(mapAudit) };
 }
 
 export interface PublicTicketInput { appSlug: string; email: string; subject: string; body: string; category?: string; customerId?: string | null; }
@@ -145,19 +153,22 @@ export async function updateTicket(context: HubContext, id: string, patch: { sta
   return getTicket(context, id);
 }
 
-export async function addTicketMessage(context: HubContext, id: string, input: { body: string; internal: boolean; deliveryStatus?: "not_requested" | "pending" }): Promise<TicketMessage> {
+export async function addTicketMessage(context: HubContext, id: string, input: { body: string; internal: boolean; deliveryStatus?: "not_requested" | "pending"; requestId: string }): Promise<TicketMessage> {
   assertCapability(context, "tickets:write"); requireId(id);
   if (typeof input.internal !== "boolean") throw new HubError(400, "INVALID_INPUT", "Choose an internal note or a customer reply.");
+  requireId(input.requestId);
   const body = cleanText(input.body, 12001);
   if (!body || body.length > 12000) throw new HubError(400, "INVALID_INPUT", "Enter a message of 1–12,000 characters.");
   const deliveryStatus = checkMember(input.deliveryStatus || "not_requested", ["not_requested", "pending"], "delivery status");
   const db = getHubService();
-  const { data: messageId, error } = await db.rpc("hub_add_ticket_message", { p_actor: context.user.id, p_ticket: id,
-    p_body: body, p_internal: input.internal, p_delivery_status: deliveryStatus });
+  const { data: result, error } = await db.rpc("hub_add_ticket_message_once", { p_actor: context.user.id, p_ticket: id,
+    p_body: body, p_internal: input.internal, p_delivery_status: deliveryStatus, p_request: input.requestId });
+  if (error?.code === "P0101") throw new HubError(409, "IDEMPOTENCY_CONFLICT", "This retry has different content. Refresh the ticket before sending another message.");
   if (error) databaseError(error);
-  const { data: message, error: readError } = await db.from("hub_ticket_messages").select(messageColumns).eq("id", messageId).eq("ticket_id", id).single();
+  if (!result?.id) throw new HubError(503, "DATABASE_UNAVAILABLE", "We could not confirm your message was saved. Keep the same message and try again.");
+  const { data: message, error: readError } = await db.from("hub_ticket_messages").select(messageColumns).eq("id", result.id).eq("ticket_id", id).single();
   if (readError) databaseError(readError);
-  return mapMessage(message);
+  return { ...mapMessage(message), replayed: result.replayed === true };
 }
 
 export interface ErrorFilters { status?: string; customerId?: string; ids?: string[]; limit?: number; offset?: number; }

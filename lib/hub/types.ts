@@ -11,9 +11,9 @@ export interface AttentionItem { id: string; title: string; description: string;
 export interface OverviewData { period: { label: string; start: string; end: string; timezone: string }; metrics: OverviewMetrics; trend: TrendPoint[]; services: ServiceStatus[]; attention: AttentionItem[]; activity: ActivityItem[]; coverage: { connected: number; total: number; missing: string[] }; updatedAt: string; currency: string; notes: string[]; }
 export type TicketStatus = "open" | "in_progress" | "waiting_customer" | "resolved" | "closed";
 export type TicketPriority = "low" | "normal" | "high" | "urgent";
-export interface Ticket { id: string; reference: string; appSlug: string; appName: string; subject: string; status: TicketStatus; priority: TicketPriority; category: string; email: string; customerId: string | null; createdAt: string; updatedAt: string; assigneeId: string | null; }
-export interface TicketMessage { id: string; body: string; authorName: string; internal: boolean; createdAt: string; deliveryStatus: "not_requested" | "pending" | "sent" | "failed"; }
-export interface TicketDetail extends Ticket { messages: TicketMessage[]; audit: ActivityItem[]; }
+export interface Ticket { id: string; reference: string; appSlug: string; appName: string; subject: string; status: TicketStatus; priority: TicketPriority; category: string; email: string; customerId: string | null; customerOwnerId: string | null; identityVerified: boolean; source: "web" | "app" | "staff" | "email"; createdAt: string; updatedAt: string; assigneeId: string | null; }
+export interface TicketMessage { id: string; body: string; authorName: string; internal: boolean; createdAt: string; deliveryStatus: "not_requested" | "pending" | "sent" | "failed"; notificationNotice?: string; replayed?: boolean; }
+export interface TicketDetail extends Ticket { messages: TicketMessage[]; nextMessagesCursor: string | null; audit: ActivityItem[]; }
 export type ErrorState = "open" | "investigating" | "resolved" | "ignored";
 export interface ErrorItem { id: string; appSlug: string; severity: "info" | "warning" | "error" | "critical"; errorCode: string | null; fingerprint: string; title: string; message: string; route: string | null; firstSeen: string; lastSeen: string; count: number; status: ErrorState; customerId: string | null; suggestedAction: string; source: string; stack?: string | null; }
 export interface PaymentRecord { id: string; provider: string; status: string; amount: number | null; currency: string | null; occurredAt: string | null; product: string | null; }

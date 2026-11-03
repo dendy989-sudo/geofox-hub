@@ -7,7 +7,7 @@ The company website and private operations center for **GEOFOX APPS LLC**. NovaN
 | Area | Included |
 | --- | --- |
 | Public website | Geofox company identity, NovaNook showcase and app website links |
-| Support | App-specific public requests, reference numbers, atomic rate limits, staff conversations, internal notes, priorities and status |
+| Support | NovaNook account-linked in-app conversations, public email fallback, app labels, private staff notes, priorities/status, atomic limits and idempotent retries |
 | Dashboard | All-app/per-app scope, real account/age/entitlement totals, retained books, current-month search reservations, today’s ISBNdb reservations, recorded payments and health checks |
 | Customers | Exact NovaNook account UUID lookup, retained usage, subscription state, recorded account milestones, captured errors, tickets and received payment events |
 | Errors | Redacted event grouping, per-customer occurrence history, triage state and a reviewable repair brief for ChatGPT |
@@ -27,8 +27,9 @@ In the new **Geofox** Supabase project's SQL Editor, run the files in `supabase/
 
 1. `202611030001_geofox_hub.sql`
 2. `20261103003005_harden_hub_ddl_helper.sql`
+3. `20261103134124_customer_app_support.sql`
 
-The first creates private `hub_*` tables and service-only functions, enables RLS, denies direct anonymous/authenticated browser access, and registers NovaNook. It does not create an owner automatically. The second removes unnecessary public RPC execution privileges from the platform's RLS event-trigger helper when that helper is present; its automatic table protection remains enabled.
+The first creates private `hub_*` tables and service-only functions, enables RLS, denies direct anonymous/authenticated browser access, and registers NovaNook. It does not create an owner automatically. The second removes unnecessary public RPC execution privileges from the platform's RLS event-trigger helper when that helper is present; its automatic table protection remains enabled. The third adds verified app-customer ticket ownership, customer-safe conversation APIs, retry protection, and bounded staff/customer message pages.
 
 ### 2. Add the Geofox keys to its Vercel project
 
@@ -68,6 +69,8 @@ Set `NOVANOOK_SUPABASE_URL` and `NOVANOOK_SUPABASE_SECRET_KEY` (or the legacy `N
 
 The bridge reads bounded summaries and exact customer records without copying the entire customer database. Moderation writes also require `integrations/novanook/link-moderator.sql`: map your Geofox staff UUID to your existing, eligible NovaNook moderator UUID in the NovaNook project. A mapping does not grant moderator membership. Source email/adult/moderator eligibility and self-review restrictions remain enforced.
 
+For NovaNook customers to create and reply to tickets using their existing login, also apply `integrations/novanook/20261103134054_geofox_hub_customer_identity.sql` in **NovaNook** and deploy its support UI. Follow `integrations/novanook/customer-support.md` for the exact activation order and controlled-account checks. This identity check is independent of the staff moderator link.
+
 ### 5. Connect new errors, replies and deployment checks
 
 These integrations are independent; missing ones stay visibly unavailable.
@@ -75,7 +78,7 @@ These integrations are independent; missing ones stay visibly unavailable.
 | Integration | Setup |
 | --- | --- |
 | NovaNook errors | Set a random `NOVANOOK_HUB_INGEST_SECRET` in Geofox. In NovaNook’s server environment set `GEOFOX_HUB_INGEST_URL=https://www.geofoxapps.com/api/ingest/novanook` and matching `GEOFOX_HUB_INGEST_SECRET`. Deploy the reviewed server reporter. See `integrations/telemetry/README.md`. |
-| Support replies | Configure a verified Resend sending domain; set `RESEND_API_KEY`, `SUPPORT_FROM_EMAIL`, and a real monitored `SUPPORT_REPLY_TO_EMAIL` in Geofox. Sending is explicitly initiated by staff; internal notes stay private. |
+| Support email | In-app replies work without email. For public email replies and optional app notifications, configure a verified Resend domain and set `RESEND_API_KEY`, `SUPPORT_FROM_EMAIL`, and monitored `SUPPORT_REPLY_TO_EMAIL`. Staff explicitly choose email; private notes stay private. |
 | Vercel status | Set `VERCEL_ACCESS_TOKEN`, `VERCEL_TEAM_ID` when applicable, `HUB_VERCEL_PROJECT_ID`, and `NOVANOOK_VERCEL_PROJECT_ID`. The token is used only server-side for deployment reads. Use the narrowest permissions available. |
 | Payments | A verified provider adapter must send production-only payment events with transaction IDs, exact minor units, currency, signed refund values, and the correct trusted customer ID. No revenue is estimated from Pro counts. No historical payments are fabricated or automatically imported. |
 
@@ -111,7 +114,7 @@ Start at Overview, review new support and moderation requests, triage captured e
 
 The hub is not a complete mirror of Supabase/Vercel consoles. Provider invoices, backup restore controls, raw runtime logs, store financial statements, incoming support-mailbox replies, reported image inspection, account deletion execution, and subscription cancellation remain in their existing provider/source workflows. Operations includes direct links and review reminders. The hub never claims those areas are healthy because a database summary worked.
 
-Support attachments and a customer-facing ticket-login portal are not included. Incoming email replies currently arrive in your configured support mailbox; they are not imported automatically. The public form shows only a receipt reference, never a customer record or private conversation.
+Customers use their existing NovaNook login for their own public conversations; there is no separate Geofox customer account. The source identity migration and NovaNook UI release must be deployed for this flow. Support attachments and automatic incoming email import are not included. Mailbox replies arrive in the configured support mailbox. Public-form submissions show only a receipt reference and are never assigned to a customer based on a typed email or UUID.
 
 Repair briefs are deterministic, redacted troubleshooting prompts. They omit raw error messages, stack traces, ticket/report text, identities and payment details. They do not call OpenAI or execute fixes. Review before sharing; ask ChatGPT to inspect source, explain a change, and provide verification/rollback steps.
 
@@ -140,3 +143,7 @@ Tests use isolated PostgreSQL via the development dependency PGlite. They never 
 Vercel tracks `main`, uses the repository root, Node 24, `npm ci`, and `npm run build`. Preserve the existing email DNS records when changing website domains.
 
 A code rollback is available through Vercel’s previous deployment. Database migrations are additive and do not drop source customer data; reverting code does not undo a migration. Review schema changes separately, use the correct project, and check provider backups before any future destructive migration. Do not run test fixtures in a hosted SQL Editor.
+
+## Connection setup guide
+
+See [Connection setup](docs/connection-setup.md) for precise email, Vercel, ISBN, billing, and error-reporting setup steps and what each check actually verifies.

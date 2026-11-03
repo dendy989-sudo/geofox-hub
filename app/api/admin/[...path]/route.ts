@@ -6,6 +6,8 @@ import { apiError, json, readJson, RequestError, sameOrigin, textValue, validUui
 import { integrationInfo, loadCustomer, loadOperations, loadOverview } from "@/lib/integrations/reporting";
 import { moderateNova, novaModeration } from "@/lib/integrations/novanook";
 import { replyEmailConfigured, sendCustomerReply } from "@/lib/integrations/email";
+import { currentCustomerNotificationEmail } from "@/lib/customer/server";
+import { sendInAppSupportNotification } from "@/lib/customer/notification";
 import { buildRepairBrief } from "@/lib/diagnostics/repair";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +34,7 @@ export async function GET(request: Request, route: RouteContext) {
       return json(await loadCustomer(context, oneApp(app), id));
     }
     if (name === "tickets") return json(await listTickets(context, app, { status: query.get("status") || undefined, query: query.get("query") || undefined, customerId: query.get("customerId") || undefined, limit: queryNumber(query, "limit", 25), offset: queryNumber(query, "offset", 0) }));
-    if (path[0] === "tickets" && path.length === 2) return json(await getTicket(context, path[1]));
+    if (path[0] === "tickets" && path.length === 2) return json(await getTicket(context, path[1], { messagesBefore: query.get("messagesBefore") }));
     if (name === "errors") return json(await listErrors(context, app, { status: query.get("status") || undefined, customerId: query.get("customerId") || undefined, limit: queryNumber(query, "limit", 25), offset: queryNumber(query, "offset", 0) }));
     if (name === "moderation") {
       assertCapability(context, "moderation:read");
@@ -61,13 +63,23 @@ async function mutate(request: Request, route: RouteContext) {
       if (typeof input.internal !== "boolean") throw new RequestError(400, "MESSAGE_TYPE_REQUIRED", "Choose an internal note or customer reply.");
       assertCapability(context, "tickets:write");
       const ticket = await getTicket(context, path[1]);
-      if (!input.internal && !replyEmailConfigured()) throw new HubError(503, "EMAIL_NOT_CONFIGURED", "Customer email replies need a verified sender and monitored reply-to mailbox. You can save an internal note while email delivery is being connected.");
-      const message = await addTicketMessage(context, ticket.id, { body: textValue(input.body, 12000, true), internal: input.internal, deliveryStatus: input.internal ? "not_requested" : "pending" });
-      if (!input.internal) {
-        const sent = await sendCustomerReply(ticket, message);
+      const inApp = ticket.source === "app" && ticket.identityVerified && Boolean(ticket.customerOwnerId);
+      if (input.notifyEmail !== undefined && typeof input.notifyEmail !== "boolean") throw new HubError(400, "INVALID_INPUT", "Choose whether to send an email notification.");
+      if (!input.internal && !inApp && !replyEmailConfigured()) throw new HubError(503, "EMAIL_NOT_CONFIGURED", "Customer email replies need a verified sender and monitored reply-to mailbox. You can save an internal note while email delivery is being connected.");
+      const wantsEmail = !input.internal && (!inApp || input.notifyEmail === true);
+      const recipient = wantsEmail && replyEmailConfigured() ? (inApp ? await currentCustomerNotificationEmail(ticket.appSlug, ticket.customerOwnerId!) : ticket.email) : null;
+      const message = await addTicketMessage(context, ticket.id, {
+        body: textValue(input.body, 12000, true), internal: input.internal,
+        deliveryStatus: recipient ? "pending" : "not_requested", requestId: textValue(input.requestId, 36, true),
+      });
+      // A replay returns the saved publication/delivery state. It must not
+      // automatically resend an email after a timeout or ambiguous send result.
+      if (!message.replayed && recipient) {
+        const sent = inApp ? await sendInAppSupportNotification(ticket, message, recipient) : await sendCustomerReply(ticket, message);
         await setTicketDelivery(context, ticket.id, message.id, sent ? "sent" : "failed");
         message.deliveryStatus = sent ? "sent" : "failed";
       }
+      if (inApp && wantsEmail && !recipient) message.notificationNotice = "The reply is available in NovaNook. An email notification was not available; email setup and a current confirmed customer address are required.";
       return json(message, 201);
     }
     if (path[0] === "errors" && path.length === 2) { await updateError(context, path[1], { status: input.status as ErrorState }); return json({ updated: true }); }

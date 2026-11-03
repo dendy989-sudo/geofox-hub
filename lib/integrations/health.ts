@@ -25,7 +25,7 @@ export async function vercelHealth(appSlug: string, appName: string): Promise<Se
   const prefix = appSlug === "geofox" ? "HUB" : appSlug.replaceAll("-", "_").toUpperCase();
   const token = process.env.VERCEL_ACCESS_TOKEN;
   const project = process.env[`${prefix}_VERCEL_PROJECT_ID`];
-  const base: ServiceStatus = { id: "vercel", appSlug, name: `${appName} deployment`, status: "unknown", detail: "Connect the Vercel read-only deployment check in hosting settings.", latencyMs: null, checkedAt: null };
+  const base: ServiceStatus = { id: "vercel", appSlug, name: `${appName} deployment`, status: "unknown", detail: !token ? "Add VERCEL_ACCESS_TOKEN to Geofox’s production environment and redeploy. The hub uses it to read deployments; ChatGPT’s Vercel connection is separate." : `Add ${prefix}_VERCEL_PROJECT_ID to Geofox’s production environment and redeploy.`, latencyMs: null, checkedAt: null };
   if (!token || !project) return base;
   const query = new URLSearchParams({ projectId: project, target: "production", limit: "1" });
   if (process.env.VERCEL_TEAM_ID) query.set("teamId", process.env.VERCEL_TEAM_ID);

@@ -25,7 +25,12 @@ export default async function SupportPage() {
     <UtilityShell>
       <p className="eyebrow">GEOFOX SUPPORT</p>
       <h1>A little help,<br />in the right place.</h1>
-      <p className="utility-intro">Choose your app and tell us what you need. We’ll keep your request in the right place.</p>
+      <p className="utility-intro">Get help with your app, your account, or a question for Geofox.</p>
+      <section className="utility-contact" aria-labelledby="existing-app-support">
+        <h2 id="existing-app-support">Already use NovaNook?</h2>
+        <p><a className="text-link" href="https://www.mynovanook.com/support.html">Open My support requests in NovaNook <span aria-hidden="true">↗</span></a> to send a request and read our replies using your existing app account. You don’t need a separate Geofox account.</p>
+        <p>Can’t sign in, or have a question before joining? Use the form below and include an email where we can contact you.</p>
+      </section>
       <SupportForm apps={apps} available={available} supportEmail={supportEmail} />
       {supportEmail ? (
         <section className="utility-contact" aria-labelledby="company-contact">

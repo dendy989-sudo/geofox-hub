@@ -21,8 +21,8 @@ await db.exec(`
   create role authenticated;
   create role service_role bypassrls;
   create schema auth;
-  create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz);
-  insert into auth.users values
+  create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);
+  insert into auth.users(id,email,email_confirmed_at,banned_until) values
     ('${owner}','owner@example.test',now(),null),
     ('${support}','support@example.test',now(),null),
     ('${moderator}','moderator@example.test',now(),null),

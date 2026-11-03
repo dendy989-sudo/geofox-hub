@@ -130,3 +130,7 @@ Use Geofox's authenticated/signed event ingress for new application errors and o
 For revenue and a payment timeline, add a separately reviewed billing adapter that authenticates provider webhooks, deduplicates event IDs, distinguishes production from sandbox, verifies currency and monetary units, handles refunds/cancellations/transfers, and reconciles with provider financial records. A plan price multiplied by Pro accounts is not revenue. Provider events also are not automatically store payouts or net proceeds.
 
 Provider health, Vercel deployment state, actual error telemetry, delivery failures and billing configuration should each retain their own evidence and last-checked time. A functioning bridge by itself should never turn every service indicator green.
+
+## Customer support in NovaNook
+
+The source identity RPC for customer tickets is separate from this reporting/moderation bridge. See [customer-support.md](customer-support.md) for activation, existing-account authentication, API contract, private-note separation, retries, and email fallback. It does not require moderator membership or a paid subscription.

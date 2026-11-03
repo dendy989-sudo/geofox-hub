@@ -22,7 +22,7 @@ export function UtilityShell({ children }: { children: React.ReactNode }) {
         <span>© {new Date().getFullYear()} GEOFOX APPS LLC</span>
         <nav className="footer-links" aria-label="Footer navigation">
           <Link href="/support">Support</Link>
-          <Link href="/admin">Staff access</Link>
+          <Link href="/admin/login">Staff sign in</Link>
         </nav>
       </footer>
     </div>
