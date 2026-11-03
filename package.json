@@ -11,7 +11,7 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/security.mjs && node supabase/tests/central.test.mjs && node integrations/novanook/verify-bridge.mjs"
+    "test": "node tests/security.mjs && node --test tests/home-auth-return.mjs && node supabase/tests/central.test.mjs && node integrations/novanook/verify-bridge.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

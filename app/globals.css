@@ -31,6 +31,9 @@ svg { display: block; }
 .nav-links > a { transition: color .15s ease; }
 .nav-links > a:hover { color: var(--accent); }
 .nav-support { display: inline-flex; align-items: center; gap: 12px; padding-left: 29px; border-left: 1px solid var(--line); }
+.nav-staff { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); white-space: nowrap; }
+.nav-staff svg { width: 16px; height: 16px; flex-shrink: 0; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.nav-links > .nav-staff:hover { background: #f3eee3; color: var(--accent); }
 .arrow-icon { width: 19px; height: 19px; flex-shrink: 0; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .hero { display: grid; grid-template-columns: 1.08fr 1fr; gap: 75px; align-items: center; padding: 77px 0 87px; }
 .eyebrow { margin: 0 0 25px; font-size: 11px; font-weight: 650; letter-spacing: 1.7px; text-transform: uppercase; line-height: 1.6; }
@@ -135,6 +138,7 @@ svg { display: block; }
   .nav-links > a:nth-child(2) { display: none; }
   .nav-support { border-left: 0; padding-left: 0; gap: 6px; }
   .nav-support .arrow-icon { width: 15px; height: 15px; }
+  .nav-staff { gap: 6px; padding: 9px 11px; min-height: 44px; }
   .hero { grid-template-columns: 1fr; padding: 48px 0 54px; gap: 42px; }
   .hero-copy { max-width: 550px; }
   .hero h1 { font-size: clamp(45px, 8.5vw, 66px); letter-spacing: -2.7px; }
@@ -166,7 +170,9 @@ svg { display: block; }
 }
 @media (max-width: 520px) {
   .site-shell { width: calc(100% - 36px); }
-  .nav-links { gap: 14px; }
+  .site-header { flex-wrap: wrap; row-gap: 10px; padding: 18px 0 14px; }
+  .nav-links { width: 100%; justify-content: space-between; gap: 14px; font-size: 12px; }
+  .nav-support { min-height: 44px; }
   .nav-links > a:first-child { display: none; }
   .hero h1 { font-size: clamp(43px, 10.5vw, 54px); }
   .hero-description { max-width: 340px; }

@@ -1,3 +1,5 @@
+import { HomeAuthReturn } from "@/components/auth/home-auth-return";
+
 function ArrowIcon({ diagonal = false }: { diagonal?: boolean }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="arrow-icon">
@@ -57,6 +59,7 @@ function BookArtwork() {
 export default function HomePage() {
   return (
     <>
+      <HomeAuthReturn />
       <a className="skip-link" href="#main-content">Skip to content</a>
       <div className="site-shell">
         <header className="site-header">
@@ -68,6 +71,10 @@ export default function HomePage() {
             <a href="#apps">Our apps</a>
             <a href="#company">Our company</a>
             <a className="nav-support" href="/support">Get support <ArrowIcon /></a>
+            <a className="nav-staff" href="/admin/login">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V6a4 4 0 0 1 8 0v4m-4 4v3" /></svg>
+              Staff sign in
+            </a>
           </nav>
         </header>
 
@@ -134,7 +141,7 @@ export default function HomePage() {
 
         <footer className="site-footer">
           <div className="footer-company"><span className="footer-mark"><FoxMark /></span><p>GEOFOX APPS LLC<span>Thoughtful apps for everyday interests.</span></p></div>
-          <div className="footer-links"><a href="/support">Support</a><a href="/admin">Staff access <ArrowIcon diagonal /></a></div>
+          <div className="footer-links"><a href="/support">Support</a><a href="/admin/login">Staff sign in <ArrowIcon diagonal /></a></div>
           <p className="copyright">© {new Date().getFullYear()} GEOFOX APPS LLC. All rights reserved.</p>
         </footer>
       </div>

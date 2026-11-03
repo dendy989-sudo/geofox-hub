@@ -13,7 +13,8 @@ begin
     raise exception 'Replace the owner email before running this script';
   end if;
   select id into owner_id from auth.users
-  where lower(email)=lower(trim(owner_email)) and email_confirmed_at is not null and (banned_until is null or banned_until<=now());
+  where lower(email)=lower(trim(owner_email)) and email_confirmed_at is not null
+    and deleted_at is null and (banned_until is null or banned_until<=now());
   if owner_id is null then
     raise exception 'A verified Auth user with this email does not exist in this Geofox project';
   end if;
