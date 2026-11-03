@@ -23,11 +23,12 @@ Use **two separate Supabase projects**: Geofox holds staff/tickets/telemetry; No
 
 ### 1. Prepare the Geofox database
 
-In the new **Geofox** Supabase project’s SQL Editor, run:
+In the new **Geofox** Supabase project's SQL Editor, run the files in `supabase/migrations` in order:
 
-`supabase/migrations/202611030001_geofox_hub.sql`
+1. `202611030001_geofox_hub.sql`
+2. `20261103003005_harden_hub_ddl_helper.sql`
 
-It creates private `hub_*` tables and service-only functions, enables RLS, denies direct anonymous/authenticated browser access, and registers NovaNook. It does not create an owner automatically.
+The first creates private `hub_*` tables and service-only functions, enables RLS, denies direct anonymous/authenticated browser access, and registers NovaNook. It does not create an owner automatically. The second removes unnecessary public RPC execution privileges from the platform's RLS event-trigger helper when that helper is present; its automatic table protection remains enabled.
 
 ### 2. Add the Geofox keys to its Vercel project
 
@@ -50,9 +51,10 @@ In Geofox Supabase Auth:
 1. Set **Site URL** to `https://www.geofoxapps.com`.
 2. Allow exact redirect URLs `https://www.geofoxapps.com/auth/callback` and `https://www.geofoxapps.com/auth/callback?next=/admin/password`. Add equivalent local URLs only for local development. Avoid broad production wildcard redirects.
 3. Configure your Auth email sender. Disable public signup; staff invitations are issued by the owner or Supabase administrator.
-4. Create/invite your own company-email Auth user and verify that email. Set your password using the invitation or recovery flow. The callback supports default Supabase invitations as well as PKCE password-reset links.
-5. Open `supabase/bootstrap_owner.sql`, replace its marked email placeholder with that exact verified company email, and run it in **Geofox**. This explicit step gives that existing account owner access. It rejects missing, unverified and banned accounts.
-6. Redeploy Vercel after adding environment variables. Sign in at `/admin/login`, then open `/admin/security` to enroll your authenticator. After verifying the authenticator works, you can set `HUB_REQUIRE_MFA=true` and redeploy to require it for owners/admins.
+4. Redeploy Geofox in Vercel now, with the core environment variables from step 2. Confirm `/admin/login` shows an enabled sign-in form before sending an invitation or password-reset link: the callback and password page need the new public Auth configuration in this deployment.
+5. Create/invite your own company-email Auth user and verify that email. For an invitation, use `https://www.geofoxapps.com/auth/callback?next=/admin/password` as its redirect URL. If the Supabase dashboard invitation uses the Site URL instead, finish email verification and then request a password-reset link from `/admin/login`. Set your password using that invitation or recovery flow. The callback supports default Supabase invitation fragments as well as PKCE password-reset links.
+6. Open `supabase/bootstrap_owner.sql`, replace only the email value assigned to `owner_email` with that exact verified company email, and run it in **Geofox**. Leave the later placeholder guard unchanged. This explicit step gives that existing account owner access. It rejects missing, unverified and banned accounts.
+7. Sign in at `/admin/login`, then open `/admin/security` to enroll your authenticator. After verifying the authenticator works, you can set `HUB_REQUIRE_MFA=true` and redeploy to require it for owners/admins.
 
 Public signup and user-editable Auth metadata never grant staff roles. Existing verified staff accounts can be linked by their Geofox Auth UUID from Connections & team; new accounts can be invited there. Owner roles are deliberately not changed through the ordinary staff dialog.
 

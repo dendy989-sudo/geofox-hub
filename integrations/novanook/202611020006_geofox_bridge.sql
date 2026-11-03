@@ -6,7 +6,11 @@ begin;
 set local lock_timeout = '3s';
 
 do $$
-declare relation_name text;
+declare
+  relation_name text;
+  required_function text;
+  prerequisite record;
+  missing_columns text;
 begin
   foreach relation_name in array array[
     'booknook_profiles','booknook_entitlements','booknook_plan_testers',
@@ -17,11 +21,56 @@ begin
     'booknook_safety_alert_outbox','booknook_deletion_requests'
   ] loop
     if to_regclass('public.' || relation_name) is null then
-      raise exception 'Geofox bridge prerequisite missing: %. Apply NovaNook migrations through 202611020005 first.', relation_name;
+      raise exception 'Geofox bridge prerequisite missing: %. Apply NovaNook migrations through 202611020005 first.', relation_name using errcode='55000';
     end if;
   end loop;
-  if to_regprocedure('public.booknook_moderator_account_eligible(uuid)') is null then
-    raise exception 'Geofox bridge requires the NovaNook moderator-management migration.';
+  foreach required_function in array array['auth.role()','public.booknook_is_adult(uuid)','public.booknook_moderator_account_eligible(uuid)'] loop
+    if to_regprocedure(required_function) is null then
+      raise exception 'Geofox bridge prerequisite missing: function %. Apply the matching NovaNook migration first.', required_function using errcode='55000';
+    end if;
+  end loop;
+  -- PL/pgSQL prepares its embedded queries at first use. Check their referenced
+  -- columns before adding any bridge objects, rather than failing on first login.
+  for prerequisite in select * from (values
+    ('auth','users',array['id','email','email_confirmed_at','created_at','last_sign_in_at','deleted_at','banned_until']),
+    ('public','booknook_profiles',array['user_id','username','display_name']),
+    ('public','booknook_entitlements',array['user_id','plan','pro_expires_at','store','will_renew','billing_checked_at']),
+    ('public','booknook_plan_testers',array['user_id','preview']),
+    ('public','booknook_library_books',array['user_id','data']),
+    ('public','booknook_user_data',array['user_id','updated_at']),
+    ('public','booknook_search_usage',array['user_id','period','used']),
+    ('public','booknook_age_eligibility',array['user_id']),
+    ('public','booknook_policy_acceptance_history',array['user_id','terms_version','privacy_version','accepted_at']),
+    ('public','isbndb_request_budget',array['budget_key','day','daily_count','blocked_until']),
+    ('public','booknook_safety_reports',array['id','reported_user','reporter','target_type','content_id','category','reason','context','status','created_at','resolution','resolved_at','image_hash']),
+    ('public','booknook_content_holds',array['owner_id','target_type','content_id','active','reason','updated_at']),
+    ('public','booknook_moderation_actions',array['id','moderator','owner_id','report_id','action','note']),
+    ('public','booknook_moderators',array['user_id','active']),
+    ('public','booknook_safety_alert_outbox',array['delivered_at','last_error']),
+    ('public','booknook_deletion_requests',array['user_id','status','requested_at','updated_at','revenuecat_state','last_error_code','retention_review_required','completed_at'])
+  ) as required(schema_name,table_name,column_names) loop
+    select string_agg(required_column,', ' order by required_column) into missing_columns
+      from unnest(prerequisite.column_names) as required_column
+      where not exists(select 1 from pg_catalog.pg_attribute a
+        where a.attrelid=to_regclass(format('%I.%I',prerequisite.schema_name,prerequisite.table_name))
+          and a.attname=required_column and a.attnum>0 and not a.attisdropped);
+    if missing_columns is not null then
+      raise exception 'Geofox bridge prerequisite missing: columns %.% (%). Apply the matching NovaNook migrations first.',
+        prerequisite.schema_name,prerequisite.table_name,missing_columns using errcode='55000';
+    end if;
+  end loop;
+  -- The moderation upsert requires a full, immediate unique key. A partial or
+  -- deferrable index cannot arbitrate ON CONFLICT(owner_id,target_type,content_id).
+  if not exists(select 1 from pg_catalog.pg_index i
+    where i.indrelid='public.booknook_content_holds'::regclass and i.indisunique
+      and i.indisvalid and i.indisready and i.indimmediate and i.indnkeyatts=3
+      and i.indpred is null and i.indexprs is null
+      and (select array_agg(a.attname::text order by a.attname::text)
+        from unnest(i.indkey) with ordinality as key(attnum,position)
+        join pg_catalog.pg_attribute a on a.attrelid=i.indrelid and a.attnum=key.attnum
+        where key.position<=i.indnkeyatts)=array['content_id','owner_id','target_type']::text[]
+  ) then
+    raise exception 'Geofox bridge prerequisite missing: immediate unique key on booknook_content_holds(owner_id,target_type,content_id).' using errcode='55000';
   end if;
 end $$;
 
@@ -327,6 +376,8 @@ begin
   select l.novanook_user_id into moderator_id
     from public.booknook_geofox_staff_links l
     join public.booknook_moderators m on m.user_id = l.novanook_user_id and m.active
+    join auth.users u on u.id = l.novanook_user_id and u.deleted_at is null
+      and (u.banned_until is null or u.banned_until <= now())
     where l.hub_user_id = p_actor_id and public.booknook_moderator_account_eligible(l.novanook_user_id);
   if moderator_id is null then
     raise exception 'moderator_link_required: Link this Geofox staff account to its active, eligible NovaNook moderator account' using errcode = '42501';

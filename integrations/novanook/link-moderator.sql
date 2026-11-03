@@ -16,8 +16,10 @@ begin
   end if;
   if not exists(select 1 from public.booknook_moderators
     where user_id = novanook_moderator_user_id and active)
+    or not exists(select 1 from auth.users where id = novanook_moderator_user_id
+      and deleted_at is null and (banned_until is null or banned_until <= now()))
     or not public.booknook_moderator_account_eligible(novanook_moderator_user_id) then
-    raise exception 'The NovaNook account must already be an active moderator with a verified email, adult eligibility and no deletion request.';
+    raise exception 'The NovaNook account must already be an active moderator with a verified email, adult eligibility, no deletion request and no current account ban or deletion.';
   end if;
   insert into public.booknook_geofox_staff_links(hub_user_id, novanook_user_id)
     values(geofox_staff_user_id, novanook_moderator_user_id)

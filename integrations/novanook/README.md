@@ -7,10 +7,10 @@ The source contract was inspected in `dendy989-sudo/Booknook`, `main` commit `8a
 ## Install
 
 1. In the **NovaNook** Supabase project, verify that the existing migration sequence through `202611020005_billing_sync_limits.sql` is applied. Follow NovaNook's rollout guide if it is not. Do not replay old migrations over a newer schema.
-2. Review and run `202611020006_geofox_bridge.sql` in that project's SQL Editor. It adds two private tables, two indexes, and service-only RPCs. Existing customer data is not rewritten. A missing prerequisite fails the whole transaction.
+2. Review and run `202611020006_geofox_bridge.sql` in that project's SQL Editor. It checks the required source tables, referenced columns, age/moderator eligibility functions, and the content-hold unique key before adding two private tables, two indexes, and service-only RPCs. A missing checked prerequisite fails the whole transaction. Existing customer data is not rewritten. A successful migration does not by itself verify live credentials, the selected production project, or all source workflows.
 3. Set the **server-only** NovaNook Supabase URL and service-role secret in Geofox's deployment environment using the names in Geofox's `.env.example`. These are the NovaNook project credentials; Geofox's own authentication and ticket database use separate credentials. Never give the NovaNook secret a `NEXT_PUBLIC_` prefix or send it to a browser.
 4. Redeploy Geofox and check its Integrations page. A successful RPC proves that the database bridge responds; it does not prove all NovaNook APIs, subscriptions, or alerts are healthy.
-5. For moderation writes, verify your Geofox staff account has the required moderation capability and your separate NovaNook account is already an active, eligible moderator. Fill in the two account UUIDs in `link-moderator.sql` and run it in **NovaNook**. The link grants no membership. Queue viewing works before a link is created; actions fail with `moderator_link_required` until it exists.
+5. For moderation writes, verify your Geofox staff account has the required moderation capability and your separate NovaNook account is already an active, eligible moderator. Replace only the two UUID values declared at the top of `link-moderator.sql`; leave the later zero-UUID guards unchanged. Run it in **NovaNook**. The link grants no membership. Queue viewing works before a link is created; actions fail with `moderator_link_required` until it exists.
 
 The migration is stored here for review and installation. Merely deploying this GitHub repository does **not** execute it in Supabase.
 
@@ -104,7 +104,7 @@ The UI must keep current-month search reservations separate from its selected 7/
 
 Label the final two actions **Restrict social access** and **Restore social access**. They do not ban sign-in, delete an account, cancel billing, or edit the customer's private library. When a report targets a profile, `hide`/`restore` also operate on its profile hold. For an avatar/cover image, a hold is tied to the exact reported image hash and does not silently apply to a replacement image.
 
-The service checks the linked NovaNook account's current active moderator membership, verified email, adult eligibility, and absence of a deletion request. It rejects self-review using that linked account ID. Revoking NovaNook moderator membership immediately blocks future Geofox moderation writes even if the hub role still permits them.
+The service checks the linked NovaNook account's current active moderator membership, verified email, adult eligibility, absence of a deletion request, and Auth account ban/deletion state. It rejects self-review using that linked account ID. Revoking NovaNook moderator membership, banning the source account, or deleting it immediately blocks future Geofox moderation writes even if the hub role still permits them. An expired ban does not block an otherwise eligible moderator.
 
 Actions lock the report, compare a version containing its status/resolution and latest existing moderation action, update the existing holds/reports, and insert both the original NovaNook audit and a Geofox attribution row in one transaction. A stale version fails with SQLSTATE `40001` and changes nothing. The server must derive `p_actor_id` from its authenticated session; it must not accept an actor ID from a client request body. No Auth JWT claims are impersonated to call a user-scoped RPC.
 
@@ -112,13 +112,16 @@ Include `booknook_geofox_audit` in the company's operational-record retention re
 
 ## Local verification
 
-`verify-bridge.mjs` runs the migration against an isolated in-memory PostgreSQL fixture using `@electric-sql/pglite`. It requires no Supabase URL, network connection, or real customer records. Install that test package outside the application and run:
+`verify-bridge.mjs` runs the migration against an isolated in-memory PostgreSQL fixture using the `@electric-sql/pglite` development dependency. It requires no Supabase URL, network connection, or real customer records. Run it from the Geofox repository:
 
 ```sh
-PGLITE_MODULE=/absolute/path/to/node_modules/@electric-sql/pglite node integrations/novanook/verify-bridge.mjs
+npm ci
+node integrations/novanook/verify-bridge.mjs
 ```
 
-Checks cover anonymous/authenticated denial, internal-helper denial, current entitlement/age partitions, tester exclusion, deleted-user handling, UTC budget resets, null unavailable metrics, reading-session validation, exclusion of private content, moderator identity/eligibility/self-review checks, stale decisions, exact-image holds/restores, timezone-independent versions, immediate membership revocation, and atomic audit attribution. This fixture validates the bridge contract; it does not establish the state of a live project's migration ledger or external services.
+An external installation can be selected with `PGLITE_MODULE=/absolute/path/to/node_modules/@electric-sql/pglite`. `npm test` runs this fixture together with the hub's other tests.
+
+Checks cover prerequisite failures before bridge objects are created, anonymous/authenticated denial, internal-helper denial, current entitlement/age partitions, tester exclusion, deleted-user handling, UTC budget resets, null unavailable metrics, reading-session validation, exclusion of private content, moderator identity/eligibility/self-review checks, stale decisions, exact-image holds/restores, timezone-independent versions, immediate membership revocation, and atomic audit attribution. This fixture validates the bridge contract; it does not establish the state of a live project's migration ledger or external services.
 
 ## Next integrations
 

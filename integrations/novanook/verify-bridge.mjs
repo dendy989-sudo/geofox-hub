@@ -18,7 +18,7 @@ create function auth.role() returns text language sql stable as $$
 $$;
 create table auth.users (
   id uuid primary key, email text, email_confirmed_at timestamptz,
-  created_at timestamptz default now(), last_sign_in_at timestamptz, deleted_at timestamptz
+  created_at timestamptz default now(), last_sign_in_at timestamptz, deleted_at timestamptz, banned_until timestamptz
 );
 create table public.booknook_profiles(user_id uuid primary key references auth.users(id), username text, display_name text);
 create table public.booknook_entitlements(user_id uuid primary key references auth.users(id), plan text,
@@ -62,6 +62,20 @@ create function public.booknook_moderator_account_eligible(p_user uuid) returns 
     and not exists(select 1 from public.booknook_deletion_requests where user_id=p_user);
 $$;
 `;
+const migration = await readFile(new URL('./202611020006_geofox_bridge.sql', import.meta.url), 'utf8');
+
+async function rejectsMissingPrerequisite(change, expected) {
+  const probe = new PGlite();
+  try {
+    await probe.exec(fixture);
+    await probe.exec(change);
+    await assert.rejects(() => probe.exec(migration), error => error.code === '55000' && error.message.includes(expected));
+    checks++;
+    await probe.exec('rollback');
+    const objects = (await probe.query("select to_regclass('public.booknook_geofox_staff_links') as links, to_regclass('public.booknook_geofox_audit') as audit")).rows[0];
+    check(objects.links === null && objects.audit === null, 'Prerequisite rejection must leave no bridge objects');
+  } finally { await probe.close(); }
+}
 
 async function run(sql, args = []) { return (await db.query(sql, args)).rows; }
 async function rpc(name, args = []) {
@@ -80,8 +94,12 @@ async function role(name, claim = name) {
 }
 
 try {
+  await rejectsMissingPrerequisite('drop table public.booknook_profiles;', 'booknook_profiles');
+  await rejectsMissingPrerequisite('drop function public.booknook_is_adult(uuid) cascade;', 'booknook_is_adult(uuid)');
+  await rejectsMissingPrerequisite('alter table public.booknook_entitlements rename column billing_checked_at to old_billing_check;', 'billing_checked_at');
+  await rejectsMissingPrerequisite('alter table public.booknook_content_holds drop constraint booknook_content_holds_pkey; create unique index partial_hold_key on public.booknook_content_holds(owner_id,target_type,content_id) where active;', 'immediate unique key');
   await db.exec(fixture);
-  await db.exec(await readFile(new URL('./202611020006_geofox_bridge.sql', import.meta.url), 'utf8'));
+  await db.exec(migration);
   for (let n = 1; n <= 9; n++) {
     await run("insert into auth.users(id,email,email_confirmed_at,created_at,last_sign_in_at,deleted_at) values($1,$2,now(),now()-interval '2 days',now(),case when $3 then now() else null end)", [id(n), `fixture${n}@example.invalid`, n === 9]);
     await run('insert into public.booknook_profiles values($1,$2,$3)', [id(n), `fixture${n}`, `Fixture ${n}`]);
@@ -170,6 +188,24 @@ try {
   const audits = await run('select hub_actor_id,novanook_actor_id from public.booknook_geofox_audit');
   check(audits.length === 3 && audits.every(row => row.hub_actor_id === hubActor && row.novanook_actor_id === id(1)), 'Successful actions have separate cross-project attribution');
   check((await run('select count(*)::integer as n from public.booknook_moderation_actions'))[0].n === 3, 'Rejected action made no underlying audit mutation');
+  await run("update auth.users set banned_until=now()+interval '1 day' where id=$1", [id(1)]);
+  await role('service_role');
+  queue = await rpc('booknook_geofox_moderation', ['all', 50]);
+  await rejects(() => rpc('booknook_geofox_moderate', [report.id, 'review', 'Banned source account', hubActor, queue.reports.find(row => row.id === report.id).version]), '42501', 'A current source Auth ban blocks moderation despite active membership');
+  await role('postgres');
+  await run("update auth.users set banned_until=now()-interval '1 day' where id=$1", [id(1)]);
+  await role('service_role');
+  const afterExpiredBan = await rpc('booknook_geofox_moderate', [report.id, 'review', 'Eligible after expired ban', hubActor, queue.reports.find(row => row.id === report.id).version]);
+  check(afterExpiredBan.ok, 'An expired source Auth ban does not block an otherwise eligible moderator');
+  await role('postgres');
+  await run('update auth.users set deleted_at=now() where id=$1', [id(1)]);
+  await role('service_role');
+  queue = await rpc('booknook_geofox_moderation', ['all', 50]);
+  await rejects(() => rpc('booknook_geofox_moderate', [report.id, 'resolve', 'Deleted source account', hubActor, queue.reports.find(row => row.id === report.id).version]), '42501', 'A source soft deletion blocks moderation despite active membership');
+  await role('postgres');
+  await run('update auth.users set deleted_at=null where id=$1', [id(1)]);
+  check((await run('select count(*)::integer as n from public.booknook_moderation_actions'))[0].n === 4, 'Banned and deleted source attempts make no action writes');
+  check((await run('select count(*)::integer as n from public.booknook_geofox_audit'))[0].n === 4, 'Banned and deleted source attempts make no attribution writes');
   await run('update public.booknook_moderators set active=false where user_id=$1', [id(1)]);
   await role('service_role');
   queue = await rpc('booknook_geofox_moderation', ['all', 50]);
