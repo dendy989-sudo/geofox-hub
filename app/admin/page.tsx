@@ -1,24 +1,27 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { UtilityShell } from "@/components/utility-shell";
+import { redirect } from "next/navigation";
+import { AdminWorkspace } from "@/components/admin/admin-workspace";
+import { getHubContext, HubError } from "@/lib/hub/server";
+import "@/components/auth/auth.css";
 
 export const metadata: Metadata = {
-  title: "Staff access",
+  title: "Control center",
   robots: { index: false, follow: false },
 };
 
-export default function AdminPage() {
-  return (
-    <UtilityShell>
-      <p className="eyebrow">GEOFOX TEAM</p>
-      <h1>A home for<br />the work behind it.</h1>
-      <section className="utility-card" aria-labelledby="staff-access">
-        <div className="status-label"><span aria-hidden="true" />Staff portal in preparation</div>
-        <h2 id="staff-access">Staff access is not open yet.</h2>
-        <p>This workspace will be available to authorized Geofox team members once account access and permissions are configured.</p>
-        <p>No customer records or administrative controls are available on this page.</p>
-        <Link className="button button-secondary" href="/support">Looking for app support? <span aria-hidden="true">↗</span></Link>
-      </section>
-    </UtilityShell>
-  );
+export const dynamic = "force-dynamic";
+
+export default async function AdminPage() {
+  let problem = "";
+  try { await getHubContext(); }
+  catch (error) {
+    if (error instanceof HubError) {
+      if (error.status === 401 || error.code === "MFA_REQUIRED") redirect("/admin/login");
+      if (error.code === "MFA_ENROLLMENT_REQUIRED") redirect("/admin/security");
+      problem = error.message;
+    } else problem = "The staff connection could not be checked. Please try again shortly.";
+  }
+  if (problem) return <div className="auth-surface"><Link href="/" className="auth-brand"><span>g</span> geofox <em>control center</em></Link><section className="auth-setup"><span className="auth-chip">GEOFOX CONTROL CENTER</span><h1>Your workspace is ready for connection.</h1><p>{problem}</p><p>The interface preview lets you explore the dashboard while staff access and app connections are configured.</p><div className="auth-setup-actions"><Link className="auth-primary" href="/admin/preview">Explore the interface</Link><Link href="/admin/login">Staff sign-in →</Link></div><p className="auth-small">Need help with NovaNook? <Link href="/support">Contact app support</Link>.</p></section></div>;
+  return <AdminWorkspace />;
 }

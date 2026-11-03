@@ -1,8 +1,8 @@
 {
   "name": "geofox-hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "GEOFOX APPS LLC company website and support hub foundation",
+  "description": "GEOFOX APPS LLC company website and private app operations hub",
   "engines": {
     "node": "24.x"
   },
@@ -10,7 +10,8 @@
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/security.mjs && node supabase/tests/central.test.mjs && node integrations/novanook/verify-bridge.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
@@ -21,6 +22,7 @@
     "server-only": "0.0.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.14",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
