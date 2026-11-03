@@ -32,25 +32,25 @@ state.from = () => {
     select(columns) { select = columns; return this; },
     in(column, values) { filters.push(row => values.includes(row[column])); return this; },
     eq(column, value) {
-      if (column.startsWith("recent_public_messages.")) messageFilters.push(row => row[column.split(".")[1]] === value);
+      if (column.startsWith("recent_customer_messages.")) messageFilters.push(row => row[column.split(".")[1]] === value);
       else filters.push(row => row[column] === value);
       return this;
     },
     order(column, { ascending, referencedTable }) {
-      (referencedTable === "recent_public_messages" ? messageOrders : orders).push({ column, ascending });
+      (referencedTable === "recent_customer_messages" ? messageOrders : orders).push({ column, ascending });
       return this;
     },
     limit(limit, { referencedTable } = {}) {
-      assert.equal(referencedTable, "recent_public_messages");
+      assert.equal(referencedTable, "recent_customer_messages");
       messageLimit = limit;
       return this;
     },
     async range(start, end) {
       const rows = orderRows(state.rows.filter(row => filters.every(filter => filter(row))), orders);
       const data = rows.slice(start, end + 1).map(row => ({ ...row,
-        recent_public_messages: select.includes("recent_public_messages:")
+        recent_customer_messages: select.includes("recent_customer_messages:")
           ? orderRows((row.messages || []).filter(message => messageFilters.every(filter => filter(message))), messageOrders)
-            .slice(0, messageLimit).map(message => ({ author_kind: message.author_kind, created_at: message.created_at }))
+            .slice(0, messageLimit).map(message => ({ id: message.id, created_at: message.created_at }))
           : undefined,
       }));
       return { data, count: rows.length, error: null };
@@ -58,20 +58,22 @@ state.from = () => {
   };
 };
 const server = moduleUrl(`
-  export class HubError extends Error { constructor(status, code, message) { super(message); this.status = status; this.code = code; } }
+  export class HubError extends Error { constructor(status, code, message) { super(message); this.name = "HubError"; this.status = status; this.code = code; } }
   export function assertCapability(context, capability) { if (!context.capabilities.includes(capability)) throw new HubError(403, "FORBIDDEN", "Forbidden"); }
   export function allowedAppSlugs(context, app) { return context.apps.filter(item => !app || app === "all" || item.slug === app).map(item => item.slug); }
   export function getHubService() { return globalThis[Symbol.for("geofox.support-inbox-test")]; }
+  export async function getHubContext() { return globalThis[Symbol.for("geofox.support-inbox-test")].context; }
   export function databaseError(error) { throw error; }
 `);
 const emailConfig = new URL("../lib/integrations/email-config.ts", import.meta.url).href;
-const { listTickets, getTicket } = await import(await compile("../lib/hub/data.ts", {
+const dataModule = await compile("../lib/hub/data.ts", {
   "server-only": empty, "./server": server,
   "./redact": new URL("../lib/hub/redact.ts", import.meta.url).href,
   "./validation": new URL("../lib/hub/validation.ts", import.meta.url).href,
   "@/lib/customer/validation": new URL("../lib/customer/validation.ts", import.meta.url).href,
   "@/lib/integrations/email-config": emailConfig,
-}));
+});
+const { listTickets, getTicket, acknowledgeTicketReply } = await import(dataModule);
 const { sendCustomerReply, replyEmailConfigured } = await import(await compile("../lib/integrations/email.ts", {
   "server-only": empty, "@/lib/hub/server": server, "./email-config": emailConfig,
 }));
@@ -113,10 +115,10 @@ test("archive tabs and full customer history retain exact server-side totals", a
   await assert.rejects(() => listTickets({ ...context, capabilities: [] }), error => error.code === "FORBIDDEN");
 });
 
-test("customer follow-ups remain marked through internal notes, reads, and active ticket edits until a public answer", async () => {
+test("customer follow-ups stay unread through staff posts, internal notes, and workflow edits until a seen receipt", async () => {
   const originalRows = state.rows;
   const message = (index, author, internal = false) => ({
-    id: String(index).padStart(3, "0"), author_kind: author, internal,
+    id: "30000000-0000-4000-8000-" + String(index).padStart(12, "0"), author_kind: author, internal,
     created_at: `2026-11-03T12:00:00.${String(index).padStart(6, "0")}Z`,
   });
   try {
@@ -131,21 +133,24 @@ test("customer follow-ups remain marked through internal notes, reads, and activ
     ticket.priority = "urgent";
     ticket.status = "in_progress";
     ticket.updated_at = "2026-11-03T13:00:00Z";
-    assert.equal((await current()).customerReplyPending, true, "private notes and metadata are not customer-facing replies");
+    assert.equal((await current()).customerReplyPending, true, "private notes and metadata do not mark a reply as viewed");
     assert.equal((await current()).customerReplyAt, message(3, "customer").created_at);
     ticket.messages.push(message(7, "staff"));
-    assert.equal((await current()).customerReplyPending, false, "a public answer clears the follow-up marker");
+    assert.equal((await current()).customerReplyPending, true, "a staff post is not a read receipt and cannot bury the customer message");
+    ticket.staff_read = { customer_message_id: message(3, "customer").id, customer_message_created_at: message(3, "customer").created_at };
+    assert.equal((await current()).customerReplyPending, false);
     assert.equal((await current()).customerReplyAt, null);
     ticket.messages.push(message(8, "customer"));
-    assert.equal((await current()).customerReplyPending, true, "another customer reply marks the ticket again");
+    assert.equal((await current()).customerReplyPending, true, "a new reply beyond the read cursor marks the ticket again");
     for (const status of ["resolved", "closed"]) {
       ticket.status = status;
       const archived = (await listTickets(context, "novanook", { status })).items[0];
-      assert.equal(archived.customerReplyPending, false, "an explicit archive decision is respected");
-      assert.equal(archived.customerReplyAt, null);
+      assert.equal(archived.customerReplyPending, true, "workflow/archive decisions remain separate from whether staff saw the reply");
+      assert.equal(archived.customerReplyAt, message(8, "customer").created_at);
     }
     ticket.status = "open";
-    assert.equal((await current()).customerReplyPending, true, "reopening restores attention to an unanswered customer reply");
+    assert.equal((await current()).customerReplyPending, true);
+    ticket.staff_read = null;
     ticket.messages = [message(1, "customer"), message(2, "customer")];
     assert.equal((await current()).customerReplyPending, true, "a follow-up before the first staff answer is still a reply");
     ticket.identity_verified = false;
@@ -155,12 +160,41 @@ test("customer follow-ups remain marked through internal notes, reads, and activ
   } finally { state.rows = originalRows; }
 });
 
-test("real PostgREST queries bound public reply metadata per ticket and keep detail markers independent of older message pages", async () => {
-  const newest = "2026-11-03T12:00:00.000003Z";
-  const ticket = { ...row(1, "open"), recent_public_messages: [
-    { author_kind: "customer", created_at: newest },
-    { author_kind: "staff", created_at: "2026-11-03T12:00:00.000002Z" },
+test("read cursor comparison preserves microseconds, timezone offsets, UUID ties, and advanced cursors over stale metadata", async () => {
+  const previous = state.rows;
+  const id = index => "30000000-0000-4000-8000-" + String(index).padStart(12, "0");
+  const at = "2026-11-03T12:00:00.123456Z";
+  const ticket = { ...row(1, "open"), messages: [
+    { id: id(1), author_kind: "customer", internal: false, created_at: "2026-11-03T12:00:00.000001Z" },
+    { id: id(3), author_kind: "customer", internal: false, created_at: at },
   ] };
+  const current = async () => (await listTickets(context)).items[0].customerReplyPending;
+  try {
+    state.rows = [ticket];
+    ticket.staff_read = { customer_message_id: id(9), customer_message_created_at: "2026-11-03T12:00:00.123455Z" };
+    assert.equal(await current(), true, "one microsecond later stays unread even with a smaller UUID");
+    ticket.staff_read.customer_message_created_at = "2026-11-03T12:00:00.123457Z";
+    assert.equal(await current(), false, "a cursor ahead of stale message metadata already covers it");
+    ticket.staff_read = { customer_message_id: id(2), customer_message_created_at: at };
+    assert.equal(await current(), true, "same-microsecond higher UUID is later");
+    ticket.staff_read.customer_message_id = id(3);
+    assert.equal(await current(), false);
+    ticket.staff_read.customer_message_id = id(4);
+    assert.equal(await current(), false, "same-microsecond advanced UUID also covers older metadata");
+    ticket.staff_read = { customer_message_id: id(3), customer_message_created_at: "2026-11-03T14:00:00.123456+02:00" };
+    assert.equal(await current(), false, "equivalent offset timestamps compare as the same instant");
+    ticket.staff_read = [{ customer_message_id: id(3), customer_message_created_at: at }];
+    assert.equal(await current(), false, "relation shape normalization preserves read state");
+  } finally { state.rows = previous; }
+});
+
+test("real PostgREST queries bound customer metadata and expose acknowledgement targets only from the returned message page", async () => {
+  const newest = "2026-11-03T12:00:00.000003Z";
+  const newestId = "30000000-0000-4000-8000-000000000003";
+  const ticket = { ...row(1, "open"), recent_customer_messages: [
+    { id: newestId, created_at: newest },
+    { id: "30000000-0000-4000-8000-000000000001", created_at: "2026-11-03T12:00:00.000001Z" },
+  ], staff_read: null };
   const oldFrom = state.from, oldRpc = state.rpc;
   const requests = [];
   const cursor = { createdAt: "2026-11-03T12:00:00.000001Z", id: "30000000-0000-4000-8000-000000000001" };
@@ -170,10 +204,12 @@ test("real PostgREST queries bound public reply metadata per ticket and keep det
       const url = new URL(typeof input === "string" ? input : input.url);
       requests.push(url);
       if (url.pathname === "/rest/v1/hub_tickets") {
-        assert.match(url.searchParams.get("select"), /recent_public_messages:hub_ticket_messages\(author_kind,created_at\)/);
-        assert.equal(url.searchParams.get("recent_public_messages.internal"), "eq.false");
-        assert.equal(url.searchParams.get("recent_public_messages.order"), "created_at.desc,id.desc");
-        assert.equal(url.searchParams.get("recent_public_messages.limit"), "2");
+        assert.match(url.searchParams.get("select"), /recent_customer_messages:hub_ticket_messages\(id,created_at\)/);
+        assert.match(url.searchParams.get("select"), /staff_read:hub_ticket_staff_reads\(customer_message_id,customer_message_created_at\)/);
+        assert.equal(url.searchParams.get("recent_customer_messages.internal"), "eq.false");
+        assert.equal(url.searchParams.get("recent_customer_messages.author_kind"), "eq.customer");
+        assert.equal(url.searchParams.get("recent_customer_messages.order"), "created_at.desc,id.desc");
+        assert.equal(url.searchParams.get("recent_customer_messages.limit"), "2");
         assert.equal(url.searchParams.get("app_slug"), "in.(novanook)");
         return new Response(JSON.stringify([ticket]), { headers: { "Content-Type": "application/json", "Content-Range": "0-0/1" } });
       }
@@ -181,9 +217,12 @@ test("real PostgREST queries bound public reply metadata per ticket and keep det
       assert.equal(url.pathname, "/rest/v1/rpc/hub_staff_ticket_messages");
       const params = JSON.parse(options.body);
       assert.equal(params.p_ticket, ticket.id);
-      assert.equal(params.p_before_created, cursor.createdAt);
-      assert.equal(params.p_before_id, cursor.id);
-      return Response.json({ messages: [{ id: "older", body: "An earlier staff answer", author_name: "Staff", internal: false, created_at: cursor.createdAt, delivery_status: "not_requested" }], nextCursor: null });
+      if (params.p_before_created) {
+        assert.equal(params.p_before_created, cursor.createdAt);
+        assert.equal(params.p_before_id, cursor.id);
+        return Response.json({ messages: [{ id: "older", body: "An earlier staff answer", author_name: "Staff", internal: false, created_at: cursor.createdAt, delivery_status: "not_requested" }], nextCursor: null });
+      }
+      return Response.json({ messages: [{ id: newestId, body: "The displayed customer reply", author_name: "Customer", internal: false, created_at: newest, delivery_status: "not_requested" }], nextCursor: null });
     } },
   });
   try {
@@ -200,11 +239,65 @@ test("real PostgREST queries bound public reply metadata per ticket and keep det
     const detail = await getTicket(context, ticket.id, { messagesBefore: Buffer.from(JSON.stringify(cursor)).toString("base64url") });
     assert.equal(detail.customerReplyPending, true);
     assert.equal(detail.customerReplyAt, newest);
+    assert.equal(detail.customerReplyMessageId, null, "metadata alone never grants a target for an undisplayed message");
     assert.equal(detail.messages[0].body, "An earlier staff answer");
     assert.equal(requests.filter(url => url.pathname === "/rest/v1/hub_tickets").length, 2);
+    assert.equal((await getTicket(context, ticket.id)).customerReplyMessageId, newestId);
+    ticket.recent_customer_messages.unshift({ id: "30000000-0000-4000-8000-000000000004", created_at: "2026-11-03T12:00:00.000004Z" });
+    ticket.recent_customer_messages.pop();
+    const raced = await getTicket(context, ticket.id);
+    assert.equal(raced.customerReplyPending, true);
+    assert.equal(raced.customerReplyMessageId, null, "a newer metadata target cannot be acknowledged from an older returned thread snapshot");
   } finally {
     state.from = oldFrom;
     if (oldRpc === undefined) delete state.rpc; else state.rpc = oldRpc;
+  }
+});
+
+test("read acknowledgement uses authenticated tickets:read access and POST only, with exact message IDs and same-origin protection", async () => {
+  const blocked = moduleUrl(`
+    const unexpected = () => { throw new Error("Unrelated dependency must not run during a read receipt"); };
+    export const integrationInfo=unexpected,loadCustomer=unexpected,loadOperations=unexpected,loadOverview=unexpected;
+    export const moderateNova=unexpected,novaModeration=unexpected;
+    export const replyEmailConfigured=unexpected,sendCustomerReply=unexpected,currentCustomerNotificationEmail=unexpected,sendInAppSupportNotification=unexpected;
+    export const buildRepairBrief=unexpected;
+  `);
+  const http = await compile("../lib/security/http.ts", { "next/server": import.meta.resolve("next/server.js") });
+  const route = await import(await compile("../app/api/admin/[...path]/route.ts", {
+    "@/lib/hub/server": server, "@/lib/hub/data": dataModule,
+    "@/lib/hub/validation": new URL("../lib/hub/validation.ts", import.meta.url).href,
+    "@/lib/security/http": http,
+    "@/lib/integrations/reporting": blocked, "@/lib/integrations/novanook": blocked,
+    "@/lib/integrations/email": blocked, "@/lib/customer/server": blocked,
+    "@/lib/customer/notification": blocked, "@/lib/diagnostics/repair": blocked,
+  }));
+  const ticketId = row(1, "open").id, messageId = "30000000-0000-4000-8000-000000000003";
+  const receipt = { ticketId, messageId, readThroughMessageId: messageId, readThroughCreatedAt: "2026-11-03T12:00:00.000003Z" };
+  const oldRpc = state.rpc, oldContext = state.context, calls = [];
+  state.context = { ...context, capabilities: ["tickets:read"] };
+  state.rpc = async (name, params) => { calls.push({ name, params }); return { data: receipt, error: null }; };
+  const url = `https://www.geofoxapps.com/api/admin/tickets/${ticketId}/read`;
+  const params = { params: Promise.resolve({ path: ["tickets", ticketId, "read"] }) };
+  const post = (payload, origin = "https://www.geofoxapps.com", method = "POST") => new Request(url, { method, headers: { origin, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  try {
+    const result = await route.POST(post({ messageId, actor: "ignored-client-actor", status: "closed" }), params);
+    assert.equal(result.status, 200);
+    assert.deepEqual((await result.json()).data, receipt);
+    assert.match(result.headers.get("cache-control"), /no-store/);
+    assert.deepEqual(calls, [{ name: "hub_acknowledge_ticket_reply", params: { p_actor: context.user.id, p_ticket: ticketId, p_message: messageId } }]);
+    assert.equal((await route.GET(new Request(url), params)).status, 404);
+    assert.equal((await route.PATCH(post({ messageId }, "https://www.geofoxapps.com", "PATCH"), params)).status, 404);
+    assert.equal((await route.POST(post({ messageId }, "https://unrelated.example.test"), params)).status, 403);
+    for (const invalid of [undefined, "latest", "not-a-message-id"]) {
+      assert.equal((await route.POST(post({ messageId: invalid }), params)).status, 400);
+    }
+    state.context = { ...context, capabilities: [] };
+    assert.equal((await route.POST(post({ messageId }), params)).status, 403);
+    assert.equal(calls.length, 1, "no rejected request or GET can write a receipt");
+    await assert.rejects(() => acknowledgeTicketReply(context, "invalid-ticket", messageId), error => error.code === "INVALID_INPUT");
+  } finally {
+    if (oldRpc === undefined) delete state.rpc; else state.rpc = oldRpc;
+    if (oldContext === undefined) delete state.context; else state.context = oldContext;
   }
 });
 

@@ -3,6 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "www.mynovanook.com", pathname: "/assets/landing/wizard-grand-illustrated-night-fall.webp", search: "" },
+      { protocol: "https", hostname: "www.mynovanook.com", pathname: "/assets/landing/grid-illustrated-day-none.webp", search: "" },
+      { protocol: "https", hostname: "www.mynovanook.com", pathname: "/assets/landing/belle-grand-illustrated-night-fall.webp", search: "" },
+    ],
+  },
   async headers() {
     return [
       {

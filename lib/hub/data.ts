@@ -1,19 +1,22 @@
 import "server-only";
 
 import { createHmac } from "node:crypto";
-import type { ActivityItem, ErrorItem, ErrorState, ListResult, ReviewTask, StaffRole, Ticket, TicketDetail, TicketMessage, TicketPriority, TicketStatus } from "./types";
+import type { ActivityItem, ErrorItem, ErrorState, ListResult, ReviewTask, StaffRole, Ticket, TicketDetail, TicketMessage, TicketPriority, TicketReadReceipt, TicketStatus } from "./types";
 import { allowedAppSlugs, assertCapability, databaseError, getHubService, HubError, type HubContext } from "./server";
 import { redactDiagnostic } from "./redact";
 import { assignableRoles, boundedLimit, boundedOffset, cleanText, customerIdentifier, errorStates, isAppSlug, isUuid, reviewPeriod, ticketCategories, ticketPriorities, ticketStatuses } from "./validation";
 import { decodeCustomerCursor, encodeCustomerCursor } from "@/lib/customer/validation";
 import { supportEmailSettings } from "@/lib/integrations/email-config";
 
+interface MessagePosition { id: string; created_at: string; }
+interface StaffReadRow { customer_message_id: string; customer_message_created_at: string; }
 interface TicketRow {
   id: string; reference: string; app_slug: string; subject: string; status: TicketStatus;
   priority: TicketPriority; category: string; email: string; customer_id: string | null;
   customer_owner_id: string | null; identity_verified: boolean; source: Ticket["source"];
   created_at: string; updated_at: string; assignee_id: string | null;
-  recent_public_messages?: { author_kind: "customer" | "staff" | "guest"; created_at: string }[];
+  recent_customer_messages?: MessagePosition[];
+  staff_read?: StaffReadRow | StaffReadRow[] | null;
 }
 interface MessageRow {
   id: string; body: string; author_name: string; internal: boolean; created_at: string;
@@ -29,26 +32,48 @@ interface ErrorRow {
   suggested_action: string; source: string; stack: string | null;
 }
 
-const ticketColumns = "id,reference,app_slug,subject,status,priority,category,email,customer_id,customer_owner_id,identity_verified,source,created_at,updated_at,assignee_id,recent_public_messages:hub_ticket_messages(author_kind,created_at)";
+const ticketColumns = "id,reference,app_slug,subject,status,priority,category,email,customer_id,customer_owner_id,identity_verified,source,created_at,updated_at,assignee_id,recent_customer_messages:hub_ticket_messages(id,created_at),staff_read:hub_ticket_staff_reads(customer_message_id,customer_message_created_at)";
 const messageColumns = "id,body,author_name,internal,created_at,delivery_status";
 const auditColumns = "id,app_slug,action,summary,created_at";
 const errorColumns = "id,app_slug,severity,error_code,fingerprint,title,message,route,first_seen,last_seen,occurrence_count,status,customer_id,suggested_action,source,stack";
 
+function messagePositionOrder(left: MessagePosition, right: MessagePosition): number | null {
+  // PostgreSQL cursors have microsecond precision; Date alone drops the last
+  // three digits. UUID byte order resolves messages with identical timestamps.
+  const timestamp = (value: string) => {
+    const match = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d{1,6}))?(?:Z|[+-]\d{2}:\d{2})$/i.exec(value);
+    const milliseconds = Date.parse(value);
+    return match && Number.isFinite(milliseconds)
+      ? { milliseconds, microseconds: Number((match[1] || "").padEnd(6, "0").slice(3)) } : null;
+  };
+  const a = timestamp(left.created_at), b = timestamp(right.created_at);
+  if (!a || !b) return null;
+  const timeOrder = a.milliseconds - b.milliseconds || a.microseconds - b.microseconds;
+  if (timeOrder) return timeOrder;
+  const leftId = left.id.toLowerCase(), rightId = right.id.toLowerCase();
+  return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+}
+function unreadCustomerReply(row: TicketRow): MessagePosition | null {
+  // Two public customer messages distinguish a follow-up from the opening
+  // request. Staff posts, internal notes and workflow changes are not receipts.
+  const customerMessages = row.recent_customer_messages || [];
+  if (row.source !== "app" || !row.identity_verified || !row.customer_owner_id || customerMessages.length < 2) return null;
+  const latest = customerMessages[0];
+  const read = Array.isArray(row.staff_read) ? row.staff_read[0] : row.staff_read;
+  if (!read) return latest;
+  const order = messagePositionOrder(latest, { id: read.customer_message_id, created_at: read.customer_message_created_at });
+  // An advanced cursor also covers older metadata from an overlapping request.
+  return order === null || order > 0 ? latest : null;
+}
 function mapTicket(context: HubContext, row: TicketRow): Ticket {
-  // The first message opens the request. A later customer message needs staff
-  // attention until a public staff answer or an explicit archive decision.
-  // Internal notes are excluded by the query, so they never clear this signal.
-  const publicMessages = row.recent_public_messages || [];
-  const customerReplyPending = row.source === "app" && row.identity_verified && Boolean(row.customer_owner_id)
-    && row.status !== "resolved" && row.status !== "closed"
-    && publicMessages.length > 1 && publicMessages[0].author_kind === "customer";
+  const unread = unreadCustomerReply(row);
   return { id: row.id, reference: row.reference, appSlug: row.app_slug,
     appName: context.apps.find((app) => app.slug === row.app_slug)?.name || row.app_slug,
     subject: row.subject, status: row.status, priority: row.priority, category: row.category,
     email: row.email, customerId: row.customer_id, customerOwnerId: row.customer_owner_id,
     identityVerified: row.identity_verified, source: row.source, createdAt: row.created_at,
     updatedAt: row.updated_at, assigneeId: row.assignee_id,
-    customerReplyPending, customerReplyAt: customerReplyPending ? publicMessages[0].created_at : null };
+    customerReplyPending: Boolean(unread), customerReplyAt: unread?.created_at || null };
 }
 function mapMessage(row: MessageRow): TicketMessage {
   return { id: row.id, body: row.body, authorName: row.author_name, internal: row.internal,
@@ -81,10 +106,10 @@ export async function listTickets(context: HubContext, appSlug: string | null = 
   const scope = allowedAppSlugs(context, appSlug);
   if (!scope.length) return { items: [], total: 0, notes: ["No apps are assigned to your staff account."] };
   let query = getHubService().from("hub_tickets").select(ticketColumns, { count: "exact" }).in("app_slug", scope)
-    .eq("recent_public_messages.internal", false)
-    .order("created_at", { referencedTable: "recent_public_messages", ascending: false })
-    .order("id", { referencedTable: "recent_public_messages", ascending: false })
-    .limit(2, { referencedTable: "recent_public_messages" });
+    .eq("recent_customer_messages.internal", false).eq("recent_customer_messages.author_kind", "customer")
+    .order("created_at", { referencedTable: "recent_customer_messages", ascending: false })
+    .order("id", { referencedTable: "recent_customer_messages", ascending: false })
+    .limit(2, { referencedTable: "recent_customer_messages" });
   const status = options.status || "active";
   if (status === "active") query = query.in("status", ["open", "in_progress", "waiting_customer"]);
   else if (status !== "all") query = query.eq("status", checkMember(status, ticketStatuses, "ticket status"));
@@ -117,10 +142,10 @@ export async function getTicket(context: HubContext, idOrReference: string, opti
   const db = getHubService();
   const { data: ticket, error } = await db.from("hub_tickets").select(ticketColumns)
     .eq(validReference ? "reference" : "id", idOrReference).in("app_slug", scope.length ? scope : ["__no_access__"])
-    .eq("recent_public_messages.internal", false)
-    .order("created_at", { referencedTable: "recent_public_messages", ascending: false })
-    .order("id", { referencedTable: "recent_public_messages", ascending: false })
-    .limit(2, { referencedTable: "recent_public_messages" }).maybeSingle();
+    .eq("recent_customer_messages.internal", false).eq("recent_customer_messages.author_kind", "customer")
+    .order("created_at", { referencedTable: "recent_customer_messages", ascending: false })
+    .order("id", { referencedTable: "recent_customer_messages", ascending: false })
+    .limit(2, { referencedTable: "recent_customer_messages" }).maybeSingle();
   if (error) databaseError(error);
   if (!ticket) throw new HubError(404, "NOT_FOUND", "This support request is unavailable or outside your app access.");
   assertCapability(context, "tickets:read", ticket.app_slug);
@@ -131,8 +156,25 @@ export async function getTicket(context: HubContext, idOrReference: string, opti
   if (messages.error) databaseError(messages.error);
   if (audit.error) databaseError(audit.error);
   if (!messages.data) throw new HubError(503, "DATABASE_UNAVAILABLE", "The ticket conversation could not be loaded.");
-  return { ...mapTicket(context, ticket), messages: (messages.data.messages || []).map(mapMessage),
+  const visibleMessages: TicketMessage[] = (messages.data.messages || []).map(mapMessage);
+  const unread = unreadCustomerReply(ticket);
+  return { ...mapTicket(context, ticket), messages: visibleMessages,
+    customerReplyMessageId: unread && visibleMessages.some(message => message.id === unread.id && !message.internal) ? unread.id : null,
     nextMessagesCursor: encodeCustomerCursor(messages.data.nextCursor), audit: (audit.data || []).map(mapAudit) };
+}
+
+export async function acknowledgeTicketReply(context: HubContext, ticketId: string, messageId: string): Promise<TicketReadReceipt> {
+  assertCapability(context, "tickets:read");
+  requireId(ticketId);
+  requireId(messageId);
+  // The RPC rechecks active staff/app access and advances only to this exact
+  // public customer message, never to a newer reply that arrived meanwhile.
+  const { data, error } = await getHubService().rpc("hub_acknowledge_ticket_reply", {
+    p_actor: context.user.id, p_ticket: ticketId, p_message: messageId,
+  });
+  if (error) databaseError(error, "The read receipt could not be saved. Please refresh the conversation and try again.");
+  if (!data) throw new HubError(503, "DATABASE_UNAVAILABLE", "The read receipt could not be saved.");
+  return data as TicketReadReceipt;
 }
 
 export interface PublicTicketInput { appSlug: string; email: string; subject: string; body: string; category?: string; customerId?: string | null; }

@@ -1,5 +1,5 @@
 import { getHubContext, getHubService, assertCapability, allowedAppSlugs, HubError } from "@/lib/hub/server";
-import { addTicketMessage, completeReview, getSettings, getTicket, listErrors, listStaff, listTickets, recordAudit, saveApp, saveStaff, setTicketDelivery, updateError, updateTicket } from "@/lib/hub/data";
+import { acknowledgeTicketReply, addTicketMessage, completeReview, getSettings, getTicket, listErrors, listStaff, listTickets, recordAudit, saveApp, saveStaff, setTicketDelivery, updateError, updateTicket } from "@/lib/hub/data";
 import { assignableRoles } from "@/lib/hub/validation";
 import type { ErrorState, StaffRole, TicketPriority, TicketStatus } from "@/lib/hub/types";
 import { apiError, json, readJson, RequestError, sameOrigin, textValue, validUuid } from "@/lib/security/http";
@@ -58,6 +58,9 @@ async function mutate(request: Request, route: RouteContext) {
     const input = await readJson(request);
     if (path[0] === "tickets" && path.length === 2 && request.method === "PATCH") {
       return json(await updateTicket(context, path[1], { ...(input.status !== undefined ? { status: input.status as TicketStatus } : {}), ...(input.priority !== undefined ? { priority: input.priority as TicketPriority } : {}) }));
+    }
+    if (path[0] === "tickets" && path.length === 3 && path[2] === "read" && request.method === "POST") {
+      return json(await acknowledgeTicketReply(context, path[1], textValue(input.messageId, 36, true)));
     }
     if (path[0] === "tickets" && path.length === 3 && path[2] === "messages" && request.method === "POST") {
       if (typeof input.internal !== "boolean") throw new RequestError(400, "MESSAGE_TYPE_REQUIRED", "Choose an internal note or customer reply.");

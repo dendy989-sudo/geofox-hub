@@ -20,6 +20,8 @@ await db.query("insert into public.hub_ticket_messages(ticket_id,body,author_id,
 await db.query("delete from auth.users where id=$1", [removedStaff]);
 const migration = await readFile(new URL("../migrations/20261103134124_customer_app_support.sql", import.meta.url), "utf8");
 await db.exec(migration);
+const readMigration = await readFile(new URL("../migrations/20261103165043_staff_ticket_read_receipts.sql", import.meta.url), "utf8");
+await db.exec(readMigration);
 await db.query("insert into public.hub_staff(user_id,display_name,role) values($1,'Private Staff Name','owner')", [staff]);
 await db.exec("insert into public.hub_apps(slug,name,website) values('otherapp','Other app','https://example.test')");
 const one = async (sql, args = []) => (await db.query(sql, args)).rows[0];
@@ -41,10 +43,14 @@ async function reply(customer, ticket, request = randomUUID(), body = "A follow-
   return (await one("select public.hub_customer_reply($1,$2,$3,$4,$5,$6,$7) result",
     [app, customer, ticket, body, request, hash("reply:" + customer), hash("reply-ip:" + customer)])).result;
 }
+async function acknowledge(ticket, message, actor = staff) {
+  return (await one("select public.hub_acknowledge_ticket_reply($1,$2,$3) result", [actor, ticket, message])).result;
+}
 let aliceTicket;
 
 test("customer schema is additive, repeatable, private, and has no public execution grants", async () => {
   await db.exec(migration);
+  await db.exec(readMigration);
   const table = await one("select relrowsecurity from pg_class where oid='public.hub_customer_requests'::regclass");
   assert.equal(table.relrowsecurity, true);
   assert.equal((await one("select author_kind from public.hub_ticket_messages where ticket_id=$1", [oldTicket])).author_kind, "staff");
@@ -203,6 +209,119 @@ test("staff receives newest messages in long threads and can retrieve every olde
   assert.equal(all.filter(message => message.internal).length, 1);
   await denied(() => db.query("select public.hub_staff_ticket_messages($1,$2)", [customer, ticket.id]), "42501");
   assert.equal(JSON.stringify(await detail(customer, ticket.id)).includes("Private staff context"), false);
+});
+
+test("shared staff receipts are additive, repeatable, RLS protected, and writable only through the scoped RPC", async () => {
+  await db.exec(readMigration);
+  assert.equal((await one("select relrowsecurity from pg_class where oid='public.hub_ticket_staff_reads'::regclass")).relrowsecurity, true);
+  assert.equal((await one("select has_table_privilege('service_role','public.hub_ticket_staff_reads','SELECT') allowed")).allowed, true);
+  for (const privilege of ["INSERT", "UPDATE", "DELETE"]) {
+    assert.equal((await one("select has_table_privilege('service_role','public.hub_ticket_staff_reads',$1) allowed", [privilege])).allowed, false);
+  }
+  for (const role of ["anon", "authenticated"]) {
+    await db.exec("set role " + role);
+    try {
+      await denied(() => db.query("select * from public.hub_ticket_staff_reads"), "42501");
+      await denied(() => acknowledge(randomUUID(), randomUUID()), "42501");
+    } finally { await db.exec("reset role"); }
+  }
+});
+
+test("receipts require current staff app access and an exact public customer message belonging to that ticket", async () => {
+  const customer = randomUUID(), ticket = await create(customer), other = await create();
+  const customerReply = await reply(customer, ticket.id);
+  const publicStaff = (await one("select public.hub_add_ticket_message($1,$2,'Public staff response',false,'not_requested') id", [staff, ticket.id])).id;
+  const privateNote = (await one("select public.hub_add_ticket_message($1,$2,'Private staff note',true,'not_requested') id", [staff, ticket.id])).id;
+  const support = randomUUID(), moderator = randomUUID();
+  for (const [id, role] of [[support, "support"], [moderator, "moderator"]]) {
+    await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())", [id, role + "@example.test"]);
+    await db.query("insert into public.hub_staff(user_id,display_name,role) values($1,'Scoped staff',$2)", [id, role]);
+    await db.query("insert into public.hub_staff_apps(user_id,app_slug) values($1,'novanook')", [id]);
+  }
+  await db.exec("insert into public.hub_apps(slug,name,website) values('readother','Read scope fixture','https://example.test')");
+  const outside = await create(randomUUID(), "readother");
+  for (const actor of [customer, moderator, randomUUID()]) await denied(() => acknowledge(ticket.id, customerReply.message.id, actor), "42501");
+  await denied(() => acknowledge(outside.id, outside.messages[0].id, support), "42501");
+  for (const message of [publicStaff, privateNote, other.messages[0].id, randomUUID()]) {
+    await denied(() => acknowledge(ticket.id, message, support), "42501");
+  }
+  // Returning a page does not itself acknowledge anything.
+  await db.query("select public.hub_staff_ticket_messages($1,$2)", [support, ticket.id]);
+  assert.equal((await one("select count(*)::int n from public.hub_ticket_staff_reads where ticket_id=$1", [ticket.id])).n, 0);
+  await db.query("update public.hub_staff set active=false where user_id=$1", [support]);
+  try { await denied(() => acknowledge(ticket.id, customerReply.message.id, support), "42501"); }
+  finally { await db.query("update public.hub_staff set active=true where user_id=$1", [support]); }
+  await db.query("update auth.users set banned_until=now()+interval '1 day' where id=$1", [support]);
+  try { await denied(() => acknowledge(ticket.id, customerReply.message.id, support), "42501"); }
+  finally { await db.query("update auth.users set banned_until=null where id=$1", [support]); }
+  await db.exec("set role service_role");
+  let first;
+  try { first = await acknowledge(ticket.id, customerReply.message.id, support); }
+  finally { await db.exec("reset role"); }
+  assert.equal(first.ticketId, ticket.id);
+  assert.equal(first.messageId, customerReply.message.id);
+  assert.equal(first.readThroughMessageId, customerReply.message.id);
+  const saved = (await one("select to_jsonb(r) result from public.hub_ticket_staff_reads r where ticket_id=$1", [ticket.id])).result;
+  assert.deepEqual(await acknowledge(ticket.id, customerReply.message.id, staff), first, "another staff member sees the same shared cursor");
+  assert.deepEqual((await one("select to_jsonb(r) result from public.hub_ticket_staff_reads r where ticket_id=$1", [ticket.id])).result, saved, "retry does not even change read_at");
+  await db.query("delete from public.hub_staff_apps where user_id=$1", [support]);
+  await denied(() => acknowledge(ticket.id, customerReply.message.id, support), "42501");
+});
+
+test("an acknowledgement cannot clear a later reply or regress a shared microsecond/UUID cursor", async () => {
+  const customer = randomUUID(), ticket = await create(customer);
+  const first = await reply(customer, ticket.id);
+  // The second reply arrives after the page displayed first, before its POST.
+  const later = await reply(customer, ticket.id);
+  assert.equal((await acknowledge(ticket.id, first.message.id)).readThroughMessageId, first.message.id);
+  assert.equal((await one("select (m.created_at,m.id)>(r.customer_message_created_at,r.customer_message_id) unread from public.hub_ticket_messages m join public.hub_ticket_staff_reads r on r.ticket_id=m.ticket_id where m.id=$1", [later.message.id])).unread, true);
+  await acknowledge(ticket.id, later.message.id);
+  assert.equal((await acknowledge(ticket.id, first.message.id)).readThroughMessageId, later.message.id);
+  const ids = ["70000000-0000-4000-8000-000000000009", "70000000-0000-4000-8000-000000000001", "70000000-0000-4000-8000-000000000002"];
+  for (const [index, id] of ids.entries()) {
+    await db.query("insert into public.hub_ticket_messages(id,ticket_id,body,author_kind,customer_author_id,created_at) values($1,$2,'Precise cursor fixture','customer',$3,$4)",
+      [id, ticket.id, customer, index === 0 ? "2030-01-01T00:00:00.123455Z" : "2030-01-01T00:00:00.123456Z"]);
+  }
+  await acknowledge(ticket.id, ids[1]);
+  assert.equal((await acknowledge(ticket.id, ids[0])).readThroughMessageId, ids[1], "microseconds outrank the larger UUID");
+  assert.equal((await acknowledge(ticket.id, ids[2])).readThroughMessageId, ids[2], "UUID order resolves identical microseconds");
+  await Promise.all([ids[0], ids[2], ids[1], first.message.id].map(message => acknowledge(ticket.id, message)));
+  assert.equal((await one("select customer_message_id from public.hub_ticket_staff_reads where ticket_id=$1", [ticket.id])).customer_message_id, ids[2]);
+  assert.equal((await one("select customer_message_created_at='2030-01-01T00:00:00.123456Z'::timestamptz exact from public.hub_ticket_staff_reads where ticket_id=$1", [ticket.id])).exact, true);
+});
+
+test("viewing a reply leaves every workflow status, ticket timestamp, conversation and audit entry unchanged", async () => {
+  const customer = randomUUID(), ticket = await create(customer);
+  const snapshot = async () => (await one("select to_jsonb(t) ticket,(select count(*)::int from public.hub_ticket_messages where ticket_id=t.id) messages,(select count(*)::int from public.hub_audit_log where entity_type='ticket' and entity_id=t.id::text) audits from public.hub_tickets t where id=$1", [ticket.id]));
+  for (const status of ["open", "in_progress", "waiting_customer", "resolved", "closed"]) {
+    await db.query("update public.hub_tickets set status='open' where id=$1", [ticket.id]);
+    const posted = await reply(customer, ticket.id);
+    await db.query("update public.hub_tickets set status=$1 where id=$2", [status, ticket.id]);
+    const before = await snapshot();
+    await acknowledge(ticket.id, posted.message.id);
+    assert.deepEqual(await snapshot(), before, status + " does not change when read");
+    assert.equal((await detail(customer, ticket.id)).status, status);
+  }
+  const closedCount = (await one("select count(*)::int n from public.hub_ticket_messages where ticket_id=$1", [ticket.id])).n;
+  await denied(() => reply(customer, ticket.id), "P0102");
+  assert.equal((await one("select count(*)::int n from public.hub_ticket_messages where ticket_id=$1", [ticket.id])).n, closedCount);
+});
+
+test("a delayed customer transaction cannot insert its later reply behind an already seen cursor", async () => {
+  const customer = randomUUID(), ticket = await create(customer);
+  const first = await reply(customer, ticket.id);
+  // Reproduce the ordering hazard deterministically: the last committed reply
+  // is ahead of this transaction's now(), as with reversed lock acquisition.
+  // Explicitly dated historical fixtures are not rewritten by the migration.
+  await db.query("update public.hub_ticket_messages set created_at=clock_timestamp()+interval '1 second' where id=$1", [first.message.id]);
+  await acknowledge(ticket.id, first.message.id);
+  const request = randomUUID();
+  const later = await reply(customer, ticket.id, request);
+  assert.equal((await one("select m.created_at>r.customer_message_created_at unread from public.hub_ticket_messages m join public.hub_ticket_staff_reads r on r.ticket_id=m.ticket_id where m.id=$1", [later.message.id])).unread, true);
+  const replay = await reply(customer, ticket.id, request);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.message.createdAt, later.message.createdAt, "retry keeps the original saved timestamp");
+  assert.equal((await acknowledge(ticket.id, first.message.id)).readThroughMessageId, first.message.id, "an older seen message still cannot consume the new reply");
 });
 
 test.after(async () => { await db.close(); });

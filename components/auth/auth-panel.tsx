@@ -66,7 +66,7 @@ export function AuthPanel({ configured, passwordUpdate = false }: { configured: 
           <span className="auth-chip">PRIVATE WORKSPACE</span>
           <h2>{factorId ? "Verify it’s you" : passwordUpdate ? "Set your password" : "Welcome to the hub"}</h2>
           <p>{passwordUpdate ? "Choose a strong password for your staff account." : "Sign in with your approved Geofox staff account."}</p>
-          {!configured && <div className="auth-notice">Staff sign-in is awaiting connection setup. You can explore the interface preview while configuration is completed.</div>}
+          {!configured && <div className="auth-notice">Staff sign-in is awaiting connection setup. Please try again once setup is complete.</div>}
           <form onSubmit={submit}>
             {!factorId && !passwordUpdate && <label>Staff email<input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" required disabled={!configured || busy} /></label>}
             {!factorId && <label>{passwordUpdate ? "New password" : "Password"}<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete={passwordUpdate ? "new-password" : "current-password"} minLength={passwordUpdate ? 12 : undefined} required disabled={!configured || busy} /></label>}
@@ -76,7 +76,7 @@ export function AuthPanel({ configured, passwordUpdate = false }: { configured: 
             <button type="submit" className="auth-primary" disabled={!configured || busy}>{busy ? "Please wait…" : factorId ? "Verify and continue" : passwordUpdate ? "Save password" : "Sign in securely"}</button>
           </form>
           {!passwordUpdate && !factorId && <button className="auth-text-button" type="button" onClick={resetPassword} disabled={!configured || busy}>Forgot your password?</button>}
-          <div className="auth-card-footer"><Link href="/admin/preview">Explore the interface preview →</Link><Link href="/support">Looking for customer support?</Link></div>
+          <div className="auth-card-footer"><Link href="/support">Looking for customer support?</Link></div>
         </section>
       </div>
     </div>

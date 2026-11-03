@@ -1,20 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { ListResult, Ticket, TicketDetail, TicketMessage, TicketPriority, TicketStatus } from "@/lib/hub/types";
+import type { ListResult, Ticket, TicketDetail, TicketMessage, TicketPriority, TicketReadReceipt, TicketStatus } from "@/lib/hub/types";
 import { apiRequest, AppBadge, Card, count, date, Empty, ErrorBanner, label, listNotes, Loading, Notes, PageHeading, Pagination, type PanelProps, Pill, useHubData } from "./common";
 import { Icon } from "./icons";
 import { CustomersPanel } from "./customers";
+import { clearAcknowledgedReply, mergeLoadedReplyTarget, observeTicketReply } from "./ticket-read-receipt";
 
 const statuses: TicketStatus[] = ["open", "in_progress", "waiting_customer", "resolved", "closed"];
 const priorities: TicketPriority[] = ["low", "normal", "high", "urgent"];
 
 function CustomerReplyBadge({ ticket }: { ticket: Ticket }) {
   if (!ticket.customerReplyPending) return null;
-  return <span className="hub-customer-replied" title={ticket.customerReplyAt ? `Customer replied ${date(ticket.customerReplyAt)}` : "A customer follow-up needs your reply"}><span aria-hidden="true" />Customer replied</span>;
+  return <span className="hub-customer-replied" title={ticket.customerReplyAt ? `Unread customer reply · ${date(ticket.customerReplyAt)}` : "Unread customer reply"}><span aria-hidden="true" />Customer replied</span>;
 }
 
-function TicketConversation({ ticket: initialTicket, props, refresh, openCustomer }: { ticket: TicketDetail; props: PanelProps; refresh: () => void; openCustomer: (appSlug: string, id: string) => void }) {
+function TicketConversation({ ticket: initialTicket, props, refresh, openCustomer, visible }: { ticket: TicketDetail; props: PanelProps; refresh: () => void; openCustomer: (appSlug: string, id: string) => void; visible: boolean }) {
   const [ticket, setTicket] = useState(initialTicket);
   const [status, setStatus] = useState(ticket.status);
   const [priority, setPriority] = useState(ticket.priority);
@@ -25,19 +26,53 @@ function TicketConversation({ ticket: initialTicket, props, refresh, openCustome
   const [olderCursor, setOlderCursor] = useState(ticket.nextMessagesCursor);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [readError, setReadError] = useState("");
+  const [readAttempt, setReadAttempt] = useState(0);
   const pendingRequest = useRef<{ signature: string; id: string } | null>(null);
   const refreshRequest = useRef<AbortController | null>(null);
+  const unreadReply = useRef<HTMLParagraphElement | null>(null);
+  const acknowledgedReplies = useRef(new Map<string, TicketReadReceipt>());
+  const refreshInbox = useRef(refresh);
+  useEffect(() => { refreshInbox.current = refresh; }, [refresh]);
   useEffect(() => () => refreshRequest.current?.abort(), []);
+  const readable = props.can("tickets:read") && !props.preview;
   const writable = props.can("tickets:write") && !props.preview;
   const inApp = ticket.source === "app" && ticket.identityVerified && Boolean(ticket.customerOwnerId);
+  useEffect(() => {
+    const target = unreadReply.current;
+    if (!visible || !readable || !ticket.customerReplyPending || !ticket.customerReplyMessageId || !target) return;
+    const snapshot = { ticketId: ticket.id, messageId: ticket.customerReplyMessageId };
+    return observeTicketReply({
+      target, snapshot,
+      isVisible: () => visible,
+      isCurrent: () => unreadReply.current === target && target.dataset.unreadReplyId === snapshot.messageId,
+      acknowledge: (reply, signal) => apiRequest<TicketReadReceipt>(`/api/admin/tickets/${encodeURIComponent(reply.ticketId)}/read`, {
+        method: "POST", body: JSON.stringify({ messageId: reply.messageId }), signal,
+      }),
+      onAcknowledged: (reply, receipt) => {
+        acknowledgedReplies.current.set(reply.messageId, receipt);
+        setTicket(current => clearAcknowledgedReply(current, reply, receipt));
+        setReadError("");
+        refreshInbox.current();
+      },
+      onError: () => setReadError("The conversation is available, but its read status could not be saved. Refresh to try again."),
+    });
+  }, [visible, readable, ticket.id, ticket.customerReplyPending, ticket.customerReplyMessageId, readAttempt]);
   function applyLatest(latest: TicketDetail, savedDetails = false) {
     const overlap = latest.messages.length ? messages.findIndex(message => message.id === latest.messages[0].id) : -1;
     const keepEarlier = Boolean(latest.nextMessagesCursor) && overlap >= 0;
-    setMessages(keepEarlier ? [...messages.slice(0, overlap), ...latest.messages] : latest.messages);
+    const loadedMessages = keepEarlier ? [...messages.slice(0, overlap), ...latest.messages] : latest.messages;
+    setMessages(loadedMessages);
     setOlderCursor(keepEarlier ? olderCursor : latest.nextMessagesCursor);
     setStatus(value => savedDetails || value === ticket.status ? latest.status : value);
     setPriority(value => savedDetails || value === ticket.priority ? latest.priority : value);
-    setTicket(latest);
+    setTicket(current => {
+      const next = mergeLoadedReplyTarget(latest, { ...current, messages: loadedMessages });
+      const receipt = next.customerReplyMessageId ? acknowledgedReplies.current.get(next.customerReplyMessageId) : undefined;
+      return receipt ? clearAcknowledgedReply(next, { ticketId: next.id, messageId: receipt.messageId }, receipt) : next;
+    });
+    setReadError("");
+    setReadAttempt(value => value + 1);
   }
   async function refreshConversation() {
     if (props.preview || busy || refreshRequest.current) return;
@@ -71,10 +106,13 @@ function TicketConversation({ ticket: initialTicket, props, refresh, openCustome
   }
   async function loadOlder() {
     if (!olderCursor || busy) return;
+    const requestedTicket = ticket;
     setBusy("older"); setError("");
     try {
       const previous = await apiRequest<TicketDetail>(`/api/admin/tickets/${encodeURIComponent(ticket.id)}?messagesBefore=${encodeURIComponent(olderCursor)}`);
       setMessages(current => [...previous.messages.filter(message => !current.some(existing => existing.id === message.id)), ...current]);
+      // A newer detail response or successful receipt takes precedence over this older-page request.
+      setTicket(current => mergeLoadedReplyTarget(current, previous, requestedTicket));
       setOlderCursor(previous.nextMessagesCursor);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load earlier messages."); }
     finally { setBusy(""); }
@@ -119,12 +157,12 @@ function TicketConversation({ ticket: initialTicket, props, refresh, openCustome
     <header className="hub-detail-head"><div><AppBadge slug={ticket.appSlug} apps={props.apps} /><h2>{ticket.subject}</h2><p>{ticket.reference} · {ticket.email} · Created {date(ticket.createdAt)}</p>
       <div className="hub-detail-meta"><CustomerReplyBadge ticket={ticket} /><Pill status={ticket.status} /><Pill status={ticket.priority} /><span className="hub-row-sub">{label(ticket.category)}</span><Pill status={inApp ? "healthy" : "unknown"}>{inApp ? "Verified app account · replies in app" : "Email support · verify account claims"}</Pill>{inApp && ticket.customerOwnerId && props.can("customers:read") ? <button type="button" className="hub-section-link" onClick={() => openCustomer(ticket.appSlug, ticket.customerOwnerId!)}><Icon name="users" size={14} />View customer profile <Icon name="arrow" size={12} /></button> : !inApp ? <span className="hub-row-sub">No verified app account linked</span> : null}</div>
     </div><div className="hub-ticket-actions"><button type="button" className="hub-button secondary small" aria-label="Refresh conversation" title="Refresh conversation" aria-busy={busy === "refresh"} disabled={props.preview || Boolean(busy)} onClick={refreshConversation}><Icon name="refresh" size={14} className={busy === "refresh" ? "hub-spinning" : undefined} />{busy === "refresh" ? "Refreshing…" : "Refresh"}</button></div></header>
-    <div className="hub-detail-body"><ErrorBanner error={error} />
+    <div className="hub-detail-body"><ErrorBanner error={error || readError} />
       <div className="hub-inline-fields" style={{ marginBottom: 23 }}><div className="hub-field"><label htmlFor="ticket-status">Status</label><select id="ticket-status" value={status} disabled={!writable || Boolean(busy)} onChange={(event) => setStatus(event.target.value as TicketStatus)}>{statuses.map((value) => <option key={value} value={value}>{label(value)}</option>)}</select></div><div className="hub-field"><label htmlFor="ticket-priority">Priority</label><select id="ticket-priority" value={priority} disabled={!writable || Boolean(busy)} onChange={(event) => setPriority(event.target.value as TicketPriority)}>{priorities.map((value) => <option key={value} value={value}>{label(value)}</option>)}</select></div><button type="button" className="hub-button secondary" disabled={!writable || Boolean(busy) || (status === ticket.status && priority === ticket.priority)} onClick={save}>{busy === "save" ? "Saving…" : "Save details"}</button></div>
       <p className="hub-ticket-status-help">{inApp ? <><strong>Resolved:</strong> answered and archived; a customer reply reopens the request. <strong>Closed:</strong> archived with customer replies turned off. You can reopen it at any time.</> : <><strong>Resolved and Closed:</strong> archived conversations. Incoming email replies reach your support mailbox; reopen the ticket here when following up.</>}</p>
       {inApp && ticket.status === "closed" ? <p className="hub-text-note">The customer can read this conversation and start a new request, but cannot reply here.</p> : null}
       {olderCursor ? <button type="button" className="hub-button secondary" disabled={Boolean(busy)} onClick={loadOlder}>{busy === "older" ? "Loading earlier messages…" : "Load earlier messages"}</button> : null}
-      {messages.length ? messages.map((message) => <article key={message.id} className={`hub-message ${message.internal ? "internal" : ""}`}><div className="hub-message-head"><strong>{message.authorName} {message.internal ? "· Internal note" : inApp ? "· In-app conversation" : "· Email conversation"}</strong><time dateTime={message.createdAt}>{date(message.createdAt)}</time></div><p>{message.body}</p>{!message.internal ? <div className="hub-detail-meta"><Pill status={message.deliveryStatus}>{message.deliveryStatus === "not_requested" ? inApp ? "Available in NovaNook" : "Saved to ticket" : message.deliveryStatus === "sent" ? "Accepted by email provider" : message.deliveryStatus === "failed" ? "Sending not confirmed — check provider before retrying" : "Email pending"}</Pill></div> : null}</article>) : <Empty icon="ticket" title="No conversation messages returned" />}
+      {messages.length ? messages.map((message) => <article key={message.id} className={`hub-message ${message.internal ? "internal" : ""}`}><div className="hub-message-head"><strong>{message.authorName} {message.internal ? "· Internal note" : inApp ? "· In-app conversation" : "· Email conversation"}</strong><time dateTime={message.createdAt}>{date(message.createdAt)}</time></div><p ref={ticket.customerReplyPending && message.id === ticket.customerReplyMessageId ? unreadReply : undefined} data-unread-reply-id={ticket.customerReplyPending && message.id === ticket.customerReplyMessageId ? message.id : undefined}>{message.body}</p>{!message.internal ? <div className="hub-detail-meta"><Pill status={message.deliveryStatus}>{message.deliveryStatus === "not_requested" ? inApp ? "Available in NovaNook" : "Saved to ticket" : message.deliveryStatus === "sent" ? "Accepted by email provider" : message.deliveryStatus === "failed" ? "Sending not confirmed — check provider before retrying" : "Email pending"}</Pill></div> : null}</article>) : <Empty icon="ticket" title="No conversation messages returned" />}
       <form className="hub-reply" onSubmit={reply}><div className="hub-field"><label htmlFor="ticket-message">{internal ? "Add an internal note" : inApp ? "Reply in NovaNook" : "Write an email reply to the customer"}</label><textarea id="ticket-message" value={body} onChange={(event) => setBody(event.target.value)} placeholder={internal ? "Leave context for yourself or your team…" : "Write a clear, helpful reply…"} maxLength={12000} required disabled={!writable || Boolean(busy)} /><small>{internal ? "Internal notes stay in your staff workspace." : inApp ? "Your reply appears in the customer’s NovaNook conversation. It does not require email delivery." : `This reply is emailed to ${ticket.email}. Incoming email replies arrive in your support mailbox; they are not imported automatically.`}</small></div>
         {!internal && inApp ? <label className="hub-text-note"><input type="checkbox" checked={notifyEmail} onChange={event => setNotifyEmail(event.target.checked)} disabled={!writable || Boolean(busy)} /> Also send an email notification, if a verified sender and current confirmed customer address are available. The email contains no conversation text.</label> : null}
         <div className="hub-reply-actions"><div className="hub-radio-row" style={{ margin: 0 }}><label><input type="radio" name="message-kind" checked={internal} onChange={() => setInternal(true)} disabled={!writable || Boolean(busy)} />Internal note</label><label><input type="radio" name="message-kind" checked={!internal} onChange={() => setInternal(false)} disabled={!writable || Boolean(busy)} />Customer reply</label></div><button className="hub-button" type="submit" disabled={!writable || Boolean(busy) || !body.trim()}><Icon name={internal ? "lock" : "send"} size={14} />{busy === "reply" ? "Saving…" : internal ? "Save internal note" : inApp ? "Publish reply in NovaNook" : "Send email reply"}</button></div>{!writable ? <p className="hub-text-note">Your role can read this ticket. Replying and changing it require support permissions.</p> : null}</form>
@@ -179,7 +217,7 @@ export function TicketsPanel(props: PanelProps) {
     <PageHeading kicker={customerTarget ? "CUSTOMER CONTEXT" : "SUPPORT INBOX"} title={customerTarget ? "Customer profile." : "Support conversation."} description={customerTarget ? "The verified app account attached to this request." : "Keep the conversation, account context, and next step together."} />
     <div hidden={Boolean(customerTarget)}>
       <ErrorBanner error={detail.error} />
-      {detail.loading || (!detail.data && !detail.error) ? <Loading label="Opening the ticket…" /> : detail.data?.id === selected ? <TicketConversation key={detail.data.id} ticket={detail.data} props={props} refresh={list.reload} openCustomer={(appSlug, id) => setCustomerTarget({ appSlug, id })} /> : null}
+      {detail.loading || (!detail.data && !detail.error) ? <Loading label="Opening the ticket…" /> : detail.data?.id === selected ? <TicketConversation key={detail.data.id} ticket={detail.data} props={props} refresh={list.reload} visible={!customerTarget} openCustomer={(appSlug, id) => setCustomerTarget({ appSlug, id })} /> : null}
       {detail.error ? <button type="button" className="hub-button secondary" onClick={detail.reload}>Try again</button> : null}
     </div>
     {customerTarget ? <CustomersPanel key={`${customerTarget.appSlug}-${customerTarget.id}`} {...props} initialCustomer={customerTarget} embedded /> : null}
@@ -199,7 +237,7 @@ export function TicketsPanel(props: PanelProps) {
     </div>
     <Card title={view === "active" ? "Active tickets" : `${label(view)} tickets`} subtitle={view === "active" ? "Open, in progress, and waiting for a customer · 5 per page" : "Archived conversations · 5 per page"} action={<Icon name="ticket" size={17} />}>
       {list.loading ? <Loading /> : tickets.length ? <div className="hub-table-scroll"><table className="hub-table"><thead><tr><th>Ticket</th><th>App</th><th>Status</th><th>Priority</th><th>Updated</th><th><span className="hub-sr-only">Open ticket</span></th></tr></thead><tbody>
-        {tickets.map(ticket => <tr key={ticket.id} className={ticket.customerReplyPending ? "hub-ticket-awaiting-reply" : undefined}><td><span className="hub-row-title">{ticket.subject}</span><span className="hub-row-sub">{ticket.reference} · {ticket.email}</span></td><td><AppBadge slug={ticket.appSlug} apps={props.apps} /></td><td><div className="hub-ticket-status"><CustomerReplyBadge ticket={ticket} />{ticket.customerReplyPending ? <span className="hub-ticket-reply-hint">Needs your reply</span> : null}<Pill status={ticket.status} /></div></td><td><Pill status={ticket.priority} /></td><td className="hub-no-wrap">{date(ticket.updatedAt, true)}</td><td><button id={`ticket-open-${ticket.id}`} type="button" className="hub-table-action" onClick={() => setSelected(ticket.id)}>Open <span className="hub-sr-only">{ticket.reference}</span></button></td></tr>)}
+        {tickets.map(ticket => <tr key={ticket.id} className={ticket.customerReplyPending ? "hub-ticket-unread-reply" : undefined}><td><span className="hub-row-title">{ticket.subject}</span><span className="hub-row-sub">{ticket.reference} · {ticket.email}</span></td><td><AppBadge slug={ticket.appSlug} apps={props.apps} /></td><td><div className="hub-ticket-status">{ticket.customerReplyPending ? <><CustomerReplyBadge ticket={ticket} /><span className="hub-ticket-reply-hint">Unread reply</span></> : <Pill status={ticket.status} />}</div></td><td><Pill status={ticket.priority} /></td><td className="hub-no-wrap">{date(ticket.updatedAt, true)}</td><td><button id={`ticket-open-${ticket.id}`} type="button" className="hub-table-action" onClick={() => setSelected(ticket.id)}>Open <span className="hub-sr-only">{ticket.reference}</span></button></td></tr>)}
       </tbody></table></div> : <Empty icon="ticket" title={search || (view === "active" && status !== "active") ? "No tickets match these filters" : `No ${view} tickets`} description={listNotes(list.data, props.preview, `${view} support tickets`)} />}
     </Card>
     {list.data ? <><Pagination offset={offset} limit={pageSize} total={list.data.total} loaded={tickets.length} disabled={list.loading} onPage={setOffset} /><p className="hub-inbox-count" aria-live="polite">{count(list.data.total)} {view} {list.data.total === 1 ? "ticket" : "tickets"}{search ? " matching your search" : ""}</p></> : null}
