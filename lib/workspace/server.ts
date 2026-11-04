@@ -72,6 +72,21 @@ export async function listWorkspaceRecords(context: HubContext, query: URLSearch
   return { items: result.items.map((item) => toWorkspaceRecord(item)), total: result.total };
 }
 
+function assertRecordMutationAllowed(record: WorkspaceRecord, version: number, app = record.appSlug) {
+  // Bind the supplied version to the snapshot inspected here. The RPC checks it
+  // again atomically, so a publishing claim after this read also blocks the write.
+  if (record.version !== version) throw new HubError(409, "RECORD_CHANGED", "Someone changed this item. Refresh it before saving your changes.");
+  if (record.module !== "marketing" || record.data.kind !== "post") return;
+  const delivery = record.data.delivery;
+  if (!delivery || typeof delivery !== "object" || Array.isArray(delivery)) return;
+  if (Object.values(delivery).some((item) => item && typeof item === "object" && item.state === "publishing")) {
+    throw new HubError(409, "DELIVERY_IN_PROGRESS", "This post is being published. Wait for its result and refresh before editing, cancelling, or deleting it.");
+  }
+  if (app !== record.appSlug && Object.keys(delivery).length) {
+    throw new HubError(409, "DELIVERY_SCOPE_LOCKED", "A post with a delivery attempt must keep its original app or company scope.");
+  }
+}
+
 export async function saveWorkspaceRecord(context: HubContext, input: Row, id?: string): Promise<WorkspaceRecord> {
   await reserve(context, "record-write");
   const existing = id ? await getWorkspaceRecord(context, id, "write") : undefined;
@@ -81,6 +96,7 @@ export async function saveWorkspaceRecord(context: HubContext, input: Row, id?: 
   const status = text(input.status ?? existing?.status, 32, "status", true);
   const version = existing ? integer(input.version, 1, 2147483647, "record version") : null;
   if (existing && existing.module !== module) throw new WorkspaceInputError("An item cannot move to a different workspace area.");
+  if (existing) assertRecordMutationAllowed(existing, version!, app);
   assertWorkspaceAccess(context, module, "write", app);
   const data = validateWorkspaceData(module, status, Object.hasOwn(input, "data") ? input.data : existing?.data, existing?.data);
   const saved = await workspaceRpc<Row>("hub_workspace_save", {
@@ -93,7 +109,10 @@ export async function saveWorkspaceRecord(context: HubContext, input: Row, id?: 
 
 export async function deleteWorkspaceRecord(context: HubContext, id: string, version: unknown) {
   await reserve(context, "record-write");
-  await workspaceRpc("hub_workspace_delete", { p_actor: context.user.id, p_id: uuid(id), p_version: integer(version, 1, 2147483647, "record version") });
+  const checkedVersion = integer(version, 1, 2147483647, "record version");
+  const existing = await getWorkspaceRecord(context, id, "write");
+  assertRecordMutationAllowed(existing, checkedVersion);
+  await workspaceRpc("hub_workspace_delete", { p_actor: context.user.id, p_id: existing.id, p_version: checkedVersion });
   return { deleted: true };
 }
 

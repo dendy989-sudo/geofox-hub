@@ -123,7 +123,7 @@ export function validateWorkspaceData(module: WorkspaceModule, status: string, v
   if (!selected.length || new Set(selected).size !== selected.length) return invalid("Choose at least one platform without duplicates.");
   const timeZone = text(data.timeZone, 100, "timezone", true);
   try { new Intl.DateTimeFormat("en-US", { timeZone }).format(); } catch { return invalid("Choose a valid timezone."); }
-  const publication: Record<string, unknown> = {};
+  const publication: Record<string, Record<string, unknown>> = {};
   const previousPublication = previous?.publication && typeof previous.publication === "object" ? previous.publication as Record<string, Record<string, unknown>> : {};
   for (const [platform, raw] of Object.entries(object(data.publication ?? {}, "publication details"))) {
     choice(platform, platforms, "social platform"); const item = object(raw, "publication details");
@@ -147,7 +147,11 @@ export function validateWorkspaceData(module: WorkspaceModule, status: string, v
   const delivery = previous?.delivery as Record<string, Record<string, unknown>> | undefined;
   for (const [platform, item] of Object.entries(previousPublication)) {
     if ((item.metrics as Record<string, unknown> | undefined)?.source === "provider" && !publication[platform]) publication[platform] = item;
-    if (delivery?.[platform]?.state === "published") publication[platform] = item;
+    if (delivery?.[platform]?.state === "published") {
+      // The provider owns the post identity and time. Manual statistics remain
+      // editable until a connected provider supplies its own statistics.
+      publication[platform] = publication[platform] ? { ...publication[platform], url: item.url, publishedAt: item.publishedAt } : item;
+    }
   }
   return { kind, platforms: selected, caption: text(data.caption, 10000, "caption"), hashtags: text(data.hashtags, 2500, "hashtags"), mentions: text(data.mentions, 2500, "mentions"), media: array(data.media, 20, "media files").map(attachment), thumbnail: data.thumbnail == null ? null : attachment(data.thumbnail), scheduledAt: timestamp(data.scheduledAt, "scheduled time", status === "scheduled"), timeZone, publishedAt: timestamp(data.publishedAt, "published time"), contentType: choice(data.contentType, ["photo", "video", "carousel", "text"], "content type"), campaign: text(data.campaign, 200, "campaign"), notes: text(data.notes, 10000, "notes"), publication, flags: array(data.flags, 100, "post flags").map(value => { const flag = object(value, "post flag"); return { platform: choice(flag.platform, platforms, "social platform"), reason: text(flag.reason, 2000, "flag reason", true), sourceUrl: safeUrl(flag.sourceUrl, "flag source"), recordedAt: timestamp(flag.recordedAt, "flag time", true), resolved: boolean(flag.resolved, "flag status") }; }), ...(delivery ? { delivery } : {}) };
 }

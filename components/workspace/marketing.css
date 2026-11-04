@@ -1,4 +1,5 @@
 .mkt-workspace { min-width: 0; }
+.mkt-workspace .hub-table-scroll { overflow-x:auto; }
 .mkt-workspace .hub-card + .hub-card { margin-top: 20px; }
 .mkt-row { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
 .mkt-muted { color:var(--hub-muted, #8490a6); font-size:12px; }
@@ -25,7 +26,7 @@
 .mkt-calendar { min-width:610px; }
 .mkt-calendar-week,.mkt-calendar-days { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); }
 .mkt-calendar-week { background:#fafbfd; border-bottom:1px solid #e5e8f0; color:#8b94a7; text-transform:uppercase; font-size:10px; font-weight:700; letter-spacing:.6px; }
-.mkt-calendar-week span { text-align:center; padding:12px 4px; }
+.mkt-calendar-week > * { text-align:center; padding:12px 4px; }
 .mkt-calendar-day { min-height:128px; padding:8px; border-right:1px solid #e9ecf3; border-bottom:1px solid #e9ecf3; display:flex; flex-direction:column; align-items:stretch; gap:5px; background:#fff; }
 .mkt-calendar-day:nth-child(7n) { border-right:0; }
 .mkt-calendar-day:nth-last-child(-n+7) { border-bottom:0; }
@@ -45,7 +46,7 @@
 .mkt-draft-card { display:flex; flex-direction:column; align-items:flex-start; gap:10px; min-width:200px; width:240px; border:1px solid #e3e7ef; background:#fff; border-radius:9px; padding:15px; text-align:left; color:#53617d; cursor:pointer; }
 .mkt-draft-card strong { font-size:13px; line-height:1.5; }
 .mkt-draft-card>span:last-child { font-size:11px; color:#9199ac; }
-.mkt-post-list { display:grid; gap:0; }
+.mkt-post-list { display:grid; gap:0; padding:20px 22px; }
 .mkt-post-row { display:grid; grid-template-columns:100px minmax(0,1fr) 165px; align-items:start; gap:18px; padding:21px 0; border-bottom:1px solid #e9edf3; }
 .mkt-post-row:first-child { padding-top:0; }
 .mkt-post-row:last-child { padding-bottom:0; border-bottom:0; }
@@ -63,7 +64,7 @@
 .mkt-flag { display:flex; align-items:center; gap:5px; color:#af7a43; font-size:11px; margin-top:8px; }
 .mkt-preview-layout { display:grid; grid-template-columns:minmax(320px,1.2fr) minmax(240px,.8fr); gap:28px; align-items:start; }
 .mkt-phone-wrap { display:flex; flex-direction:column; align-items:center; gap:14px; padding:16px 0; }
-.mkt-phone { width:306px; min-height:540px; border:8px solid #334058; border-radius:35px; padding:0 0 9px; overflow:hidden; background:#fff; box-shadow:0 14px 35px #48517114; color:#46516a; }
+.mkt-phone { width:min(306px,100%); min-height:540px; border:8px solid #334058; border-radius:35px; padding:0 0 9px; overflow:hidden; background:#fff; box-shadow:0 14px 35px #48517114; color:#46516a; }
 .mkt-phone-status { display:flex; align-items:center; justify-content:space-between; padding:12px 17px 6px; font-size:10px; font-weight:700; }
 .mkt-phone-status:after { content:""; display:block; background:#334058; border-radius:7px; width:50px; height:9px; }
 .mkt-phone-channel { display:flex; align-items:center; justify-content:center; gap:7px; padding:10px; border-bottom:1px solid #eef0f5; font-size:12px; font-weight:650; }
@@ -73,6 +74,8 @@
 .mkt-phone-profile p { font-size:9px; color:#929aaa; margin:5px 0 0; line-height:1.5; }
 .mkt-phone-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:2px; }
 .mkt-grid-item { display:block; aspect-ratio:3/4; min-width:0; position:relative; overflow:hidden; border:0; padding:0; background:#f2eef7; cursor:pointer; text-align:left; }
+.mkt-phone-grid.tall .mkt-grid-item { aspect-ratio:9/16; }
+.mkt-phone-grid > .mkt-phone-empty { grid-column:1/-1; }
 .mkt-grid-item .mkt-media-placeholder { min-height:0; padding:5px; }
 .mkt-grid-item .mkt-media-placeholder small { font-size:8px; }
 .mkt-grid-item>span:last-child:not(.mkt-media-placeholder) { position:absolute; bottom:5px; left:4px; right:4px; border-radius:4px; padding:3px 5px; background:#ffffffeb; color:#67517f; font-size:8px; white-space:nowrap; text-overflow:ellipsis; overflow:hidden; }
@@ -80,36 +83,42 @@
 .mkt-phone-empty { min-height:230px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px; color:#99a0b0; font-size:11px; line-height:1.7; gap:10px; }
 .mkt-phone-nav { display:flex; justify-content:space-around; color:#8993a7; padding:15px 12px 7px; border-top:1px solid #eceef4; }
 .mkt-phone-timeline { padding:0 8px; }
-.mkt-timeline-post { padding:11px 0; border-top:1px solid #edf0f5; }
+.mkt-timeline-post { display:block; width:100%; padding:11px 0; border:0; border-top:1px solid #edf0f5; background:#fff; color:inherit; text-align:left; cursor:pointer; }
 .mkt-timeline-name { display:flex; align-items:center; gap:6px; font-size:10px; }
 .mkt-timeline-post>p { margin:8px 0; font-size:10px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
 .mkt-timeline-post>div:not(.mkt-timeline-name) { width:100%; aspect-ratio:4/3; overflow:hidden; border-radius:7px; }
 .mkt-timeline-post img,.mkt-timeline-post video { width:100%; height:100%; object-fit:cover; }
 .mkt-timeline-post>small { color:#9e80bd; font-size:8px; }
 .mkt-preview-legend { color:#8790a5; font-size:11px; line-height:1.7; }
+.mkt-preview-legend > span { display:inline-flex; align-items:center; gap:6px; margin:5px 14px 5px 0; }
+.mkt-preview-legend i { display:inline-block; width:8px; height:8px; border-radius:50%; background:#bda3dc; }
+.mkt-preview-legend i.published { background:#7ab09a; }
 .mkt-preview-legend>p { margin:0 0 12px; }
 .mkt-preview-legend ul { padding-left:17px; }
 .mkt-preview-legend h3 { color:#5d6980; margin:15px 0 10px; font-size:14px; }
 .mkt-preview-legend button { width:100%; text-align:left; border:1px solid #e4e7ef; background:white; border-radius:7px; padding:10px; margin-bottom:8px; color:#68738a; display:flex; align-items:center; gap:8px; cursor:pointer; }
 .mkt-preview-legend button strong { flex:1; }
-.mkt-analytics-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:15px; margin:18px 0; }
+.mkt-analytics-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:15px; margin:18px 0; }
 .mkt-analytics-summary>div { border:1px solid #e4e8f1; border-radius:9px; padding:18px; background:#fff; }
 .mkt-analytics-summary span,.mkt-analytics-summary small { display:block; color:#8b94a8; font-size:11px; }
 .mkt-analytics-summary strong { display:block; color:#505d79; font-size:28px; font-weight:600; margin:7px 0; }
 .mkt-insight-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; margin-bottom:20px; }
 .mkt-insight-grid .hub-card { margin:0!important; min-width:0; }
-.mkt-insight-list { padding:0; margin:0; list-style:none; display:grid; gap:19px; }
+.mkt-insight-list { padding:20px 22px; margin:0; list-style:none; display:grid; gap:19px; }
+.mkt-insight { min-width:0; color:#6e7890; font-size:11px; }
+.mkt-insight > div:first-child { display:flex; flex-direction:column; gap:4px; }
+.mkt-insight > div:first-child > span { color:#96a0b2; font-size:10px; }
 .mkt-insight-heading { display:flex; align-items:start; justify-content:space-between; gap:8px; font-size:12px; color:#69758d; }
 .mkt-insight-heading strong { font-weight:600; overflow-wrap:anywhere; }
 .mkt-insight-heading span { white-space:nowrap; color:#8662b4; }
 .mkt-insight-bar { height:5px; margin:7px 0; background:#f0ebf8; border-radius:4px; overflow:hidden; }
-.mkt-insight-bar>span { display:block; height:100%; background:#af96cd; border-radius:4px; }
+.mkt-insight-bar>span,.mkt-insight-bar>i { display:block; height:100%; background:#af96cd; border-radius:4px; }
 .mkt-insight-list small { font-size:10px; color:#9aa1b1; }
 .mkt-insight-note { font-size:11px; line-height:1.7; color:#929bad; margin:15px 0 0; }
-.mkt-small-empty { font-size:12px; color:#96a0b1; line-height:1.8; padding:20px 0; }
+.mkt-small-empty { font-size:12px; color:#96a0b1; line-height:1.8; padding:20px 22px; }
 .mkt-inline-button { color:#8162b0; text-align:left; font:inherit; font-size:12px; border:0; background:transparent; padding:0; cursor:pointer; }
-.mkt-inbox-list { display:grid; gap:0; }
-.mkt-inbox-row { padding:20px 0; display:grid; grid-template-columns:1fr auto; gap:18px; border-bottom:1px solid #e6ebf2; }
+.mkt-inbox-list { display:grid; gap:0; padding:20px 22px; }
+.mkt-inbox-row { padding:20px 0; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:18px; border-bottom:1px solid #e6ebf2; }
 .mkt-inbox-row:first-child { padding-top:0; }
 .mkt-inbox-row:last-child { border-bottom:0; padding-bottom:0; }
 .mkt-inbox-row h3 { font-size:14px; color:#55627d; margin:10px 0 6px; }
@@ -129,8 +138,8 @@
 .mkt-editor-side { background:#f9f8fc; border:1px solid #ece7f4; border-radius:10px; padding:17px; }
 .mkt-form-two { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
 .mkt-channel-options { display:flex; gap:8px; flex-wrap:wrap; }
-.mkt-channel-options label { border:1px solid #e2e5ef; border-radius:8px; display:flex; align-items:center; gap:5px; padding:8px 9px; font-size:12px; color:#7c879c; cursor:pointer; }
-.mkt-channel-options label.selected { background:#f6f1fb; border-color:#bdabda; color:#6e5190; }
+.mkt-channel-options label,.mkt-channel-options button { border:1px solid #e2e5ef; border-radius:8px; display:flex; align-items:center; gap:5px; padding:8px 9px; font:inherit; font-size:12px; color:#7c879c; background:#fff; cursor:pointer; }
+.mkt-channel-options label.selected,.mkt-channel-options button.active { background:#f6f1fb; border-color:#bdabda; color:#6e5190; }
 .mkt-channel-options input { accent-color:#916fba; margin:0 4px 0 0; }
 .mkt-caption-preview { padding:13px; background:#f7f6fa; border:1px solid #e8e4f0; border-radius:8px; white-space:pre-wrap; font-size:12px; line-height:1.7; color:#7c8299; overflow-wrap:anywhere; }
 .mkt-composer-preview { width:136px; aspect-ratio:3/4; margin:0 auto; border-radius:10px; overflow:hidden; border:1px solid #e5dfed; }
@@ -157,3 +166,5 @@
 @media(max-width:520px) { .mkt-toolbar { align-items:stretch; } .mkt-toolbar-filters { width:100%; } .mkt-search { width:100%; min-width:0; } .mkt-analytics-summary { grid-template-columns:1fr; } .mkt-analytics-summary>div { display:grid; grid-template-columns:1fr auto; gap:5px; } .mkt-analytics-summary strong { grid-column:2; grid-row:1/3; margin:0; } .mkt-insight-list { grid-template-columns:1fr; } .mkt-form-two,.mkt-editor-side { grid-template-columns:1fr; } .mkt-metric-inputs { grid-template-columns:repeat(2,minmax(0,1fr)); } .mkt-flag-form { grid-template-columns:1fr; } .mkt-media-metadata>div { grid-template-columns:1fr 1fr 1fr; } .mkt-media-metadata span { grid-column:1/-1; } .mkt-phone { width:280px; } }
 
 .mkt-connected-scopes { display:grid; gap:8px; margin:12px 0; font-size:12px; }
+@media(max-width:1100px) { .mkt-preview-layout { grid-template-columns:1fr; } .mkt-analytics-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:520px) { .mkt-phone { width:min(280px,100%); } .mkt-analytics-summary { grid-template-columns:1fr; } }

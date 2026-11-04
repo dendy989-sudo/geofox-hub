@@ -1,6 +1,7 @@
 .hub-company-root { --hub-rail-width: 72px; --hub-sidebar-width: 232px; }
 .hub-company-root .hub-sidebar { left: var(--hub-rail-width); width: var(--hub-sidebar-width); border-left: 1px solid #ffffff05; }
 .hub-company-root .hub-main { margin-left: calc(var(--hub-rail-width) + var(--hub-sidebar-width)); }
+.hub-company-root .hub-menu-button { display: none; }
 .hub-area-rail { position: fixed; inset: 0 auto 0 0; z-index: 60; width: var(--hub-rail-width); display: flex; flex-direction: column; gap: 15px; padding: 23px 7px 15px; background: #0b1122; color: #a2acc4; border-right: 1px solid #1f2940; overflow-y: auto; }
 .hub-rail-brand { display: grid; place-items: center; margin: 0 auto 10px; width: 35px; height: 38px; color: #f59774; }
 .hub-rail-brand svg { width: 32px; height: 32px; }
