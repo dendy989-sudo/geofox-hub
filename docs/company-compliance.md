@@ -1,0 +1,30 @@
+# Company compliance workspace
+
+The Legal workspace stores the company's own obligation register. Its starter checklist is optional, scoped to the company and registered apps, and deduplicated using a stable request ID for each starter and scope. It includes official sources, leaves unconfirmed fees blank, and asks the owner to review applicability. It does not submit filings, determine every obligation, watch policy changes, or send automatic reminders.
+
+The current starter context is a Texas single-member LLC formed in October 2026, with US-facing apps. Confirm those facts, federal tax classification, and the actual audience and data practices before relying on the dates. App review dates represent the owner's internal review schedule.
+
+## Sources reviewed November 4, 2026
+
+| Topic | Basis and action | Primary source |
+| --- | --- | --- |
+| Texas franchise tax and Public Information Report | LLCs use the Public Information Report. The general annual deadline is May 15; a weekend or holiday can move it to the next business day. A no-tax-due tax-report exemption does not automatically remove the information report. Confirm the actual tax account, first report year, threshold and instructions. | [Information report requirements](https://comptroller.texas.gov/taxes/franchise/pir-oir-filing-req.php), [report/payment FAQ](https://comptroller.texas.gov/taxes/franchise/faq/reports-payments.php), [franchise tax](https://comptroller.texas.gov/taxes/franchise/) |
+| First annual Texas report | For an entity first subject during October 2026, the expected annual deadline is May 17, 2027, because May 15 falls on Saturday. The starter notes describe this expected date and assumption. Its filing due date stays blank until the company confirms the account and enters the deadline. | [Report/payment FAQ](https://comptroller.texas.gov/taxes/franchise/faq/reports-payments.php) |
+| Registered agent | Texas filing entities must continuously maintain an agent and registered office. The owner records their provider's actual contract fee and renewal date; no fixed annual fee is assumed. | [Secretary of State FAQ](https://www.sos.state.tx.us/corp/registeredagentfaqs.shtml) |
+| Federal tax | An individual-owned single-member LLC is generally disregarded unless it elects corporate treatment. Employment and certain excise taxes have separate rules. The starter asks to confirm classification and applicable returns before adding a filing date. | [IRS single-member LLC guidance](https://www.irs.gov/businesses/small-businesses-self-employed/single-member-limited-liability-companies) |
+| Estimated taxes | Individuals generally may need estimated tax if they expect to owe at least $1,000 after withholding and credits, subject to the additional rules and exceptions in IRS guidance. Actual installment due dates must be entered from current instructions. A quarterly internal review is not an IRS payment schedule. | [IRS estimated tax guidance](https://www.irs.gov/businesses/small-businesses-self-employed/estimated-taxes) |
+| BOI | FinCEN's March 2025 rule exempts entities created in the United States. This is a rule-review prompt for a domestic Texas LLC, not an assumed annual BOI filing or fee. | [FinCEN announcement](https://www.fincen.gov/news/news-releases/fincen-removes-beneficial-ownership-reporting-requirements-us-companies-and-us) |
+| Privacy | Texas Chapter 541 has applicability criteria, a small-business exception, and a separate sensitive-data sale restriction. Review the app's real data practices and states served, and add other applicable state requirements. | [Texas Business & Commerce Code, Chapter 541](https://tcss.legis.texas.gov/resources/BC/htm/BC.541.htm) |
+| Children's privacy | COPPA can cover under-13-directed services and general-audience services with actual knowledge of collection from under-13 users. A 13+ label alone does not settle applicability. Review age controls, reports and SDKs. | [FTC COPPA FAQ](https://www.ftc.gov/business-guidance/resources/complying-coppa-frequently-asked-questions) |
+
+## Operating the register
+
+Add a filing/payment due date only when it is known. Use a separate internal review date for applicability checks or policy reviews. Attach filing confirmations and contracts. Mark an occurrence completed to preserve its evidence; an optional follow-up occurrence requires the owner to confirm the next date, including official weekend/holiday rules. Completed, active and not-applicable records are filterable. Each record retains its source URL and notes.
+
+Starter request IDs are retained after deletion to prevent an uncertain retry from silently recreating a record. Refresh after an interrupted import to review saved items. If a starter was deleted, use **New obligation** for its replacement; an already-used request ID does not restore deleted records. Retries with changed starter data, including a different review date, can also be rejected rather than create a duplicate. Only complete HTTPS reference links without embedded credentials are accepted.
+
+## Accounting scope
+
+Accounting is a manual USD cashbook. It records positive integer-cent amounts with income, expense, owner contribution, owner draw, or internal transfer types. Only paid operating income and paid operating expenses affect the net operating cash figure. Owner contributions and draws are shown separately; internal transfers have no effect on total cash movement. Pending entries are excluded from paid totals. Void entries are excluded from paid and pending totals. CSV exports reflect the selected filters and escape formula-like spreadsheet values. The initial register loads up to 1,000 records; if more records exist, the page labels all figures as subtotals and disables CSV export until the selected app scope is complete. Receipts are attached to individual records.
+
+This first version does not reconcile bank balances or calculate taxable profit, depreciation, sales tax, payroll, or return amounts. Entries and evidence can be exported/reviewed for bookkeeping and tax preparation.

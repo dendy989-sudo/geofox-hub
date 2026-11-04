@@ -1,8 +1,20 @@
 import type { CSSProperties } from "react";
 
-export type IconName = "grid" | "users" | "ticket" | "pulse" | "shield" | "checklist" | "settings" | "arrow" | "search" | "refresh" | "copy" | "check" | "close" | "chevron" | "external" | "book" | "coins" | "calendar" | "clock" | "info" | "alert" | "bolt" | "logout" | "menu" | "send" | "download" | "lock" | "layers" | "globe";
+export type IconName = "grid" | "users" | "ticket" | "pulse" | "shield" | "checklist" | "settings" | "arrow" | "search" | "refresh" | "copy" | "check" | "close" | "chevron" | "external" | "book" | "coins" | "calendar" | "clock" | "info" | "alert" | "bolt" | "logout" | "menu" | "send" | "download" | "lock" | "layers" | "globe" | "megaphone" | "chart" | "profile" | "wallet" | "scales" | "plus" | "edit" | "trash" | "image" | "upload" | "columns" | "message";
 
 const paths: Record<IconName, React.ReactNode> = {
+  message: <path d="M21 11a8 8 0 0 1-8 8H8l-6 3 2-6a8 8 0 0 1-1-5 9 9 0 0 1 18 0Z" />,
+  megaphone: <><path d="M4 9h4l11-5v16L8 15H4V9Zm4 6 2 6h4l-2-4M22 9v6" /></>,
+  chart: <><path d="M3 3v18h18M7 16v-4m5 4V8m5 8V5" /></>,
+  profile: <><circle cx="12" cy="8" r="4" /><path d="M4 21v-2a8 8 0 0 1 16 0v2" /></>,
+  wallet: <><path d="M20 7V4H5a2 2 0 0 0 0 4h16v13H5a2 2 0 0 1-2-2V6m18 7h-6v4h6m-3-2h.1" /></>,
+  scales: <><path d="M12 3v18m-6 0h12M4 7l8-3 8 3M4 7l-3 7h6L4 7Zm16 0-3 7h6l-3-7ZM1 14c0 4 6 4 6 0m10 0c0 4 6 4 6 0" /></>,
+  plus: <path d="M12 5v14M5 12h14" />,
+  edit: <><path d="m16 3 5 5-12 12-6 1 1-6L16 3Zm-2 2 5 5" /></>,
+  trash: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7" /></>,
+  image: <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8" cy="8" r="1.5" /><path d="m3 17 5-5 4 4 4-6 5 7" /></>,
+  upload: <><path d="M12 16V3m-5 5 5-5 5 5M3 16v5h18v-5" /></>,
+  columns: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M15 3v18" /></>,
   grid: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
   users: <><circle cx="9" cy="8" r="3" /><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v3" /></>,
   ticket: <><path d="M4 5h16v5a2 2 0 0 0 0 4v5H4v-5a2 2 0 0 0 0-4V5Z" /><path d="M9 8v2m0 4v2m0 3v-1M9 5v1" /></>,

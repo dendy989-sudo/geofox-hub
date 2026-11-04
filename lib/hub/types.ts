@@ -1,8 +1,10 @@
+import type { WorkspaceAccess } from "../workspace/types";
+
 export type StaffRole = "owner" | "admin" | "support" | "moderator" | "analyst";
-export type Capability = "overview:read" | "customers:read" | "tickets:read" | "tickets:write" | "errors:read" | "errors:write" | "moderation:read" | "moderation:write" | "operations:read" | "settings:write" | "staff:write" | "audit:read";
+export type Capability = "overview:read" | "customers:read" | "tickets:read" | "tickets:write" | "errors:read" | "errors:write" | "moderation:read" | "moderation:write" | "operations:read" | "settings:write" | "staff:write" | "audit:read" | "tasks:read" | "tasks:write" | "marketing:read" | "marketing:write" | "legal:read" | "legal:write" | "accounting:read" | "accounting:write";
 export type HealthState = "healthy" | "degraded" | "down" | "unknown";
 export interface HubApp { slug: string; name: string; color: string; website: string; configured: boolean; }
-export interface HubBootstrap { user: { id: string; email: string }; staff: { role: StaffRole; displayName: string }; apps: HubApp[]; capabilities: Capability[]; setupIssues: string[]; }
+export interface HubBootstrap { user: { id: string; email: string }; staff: { role: StaffRole; displayName: string }; apps: HubApp[]; capabilities: Capability[]; workspaceAccess: WorkspaceAccess; setupIssues: string[]; }
 export interface ServiceStatus { id: string; appSlug: string; name: string; status: HealthState; detail: string; latencyMs: number | null; checkedAt: string | null; }
 export interface OverviewMetrics { usersTotal: number | null; freeUsers: number | null; paidUsers: number | null; adultFree: number | null; adultPaid: number | null; teenFree: number | null; teenPaid: number | null; unknownAge: number | null; booksTotal: number | null; searchesPeriod: number | null; isbnCallsToday: number | null; revenuePeriod: number | null; openTickets: number | null; openErrors: number | null; pendingModeration: number | null; }
 export interface TrendPoint { date: string; users: number | null; searches: number | null; revenue: number | null; errors: number | null; }
