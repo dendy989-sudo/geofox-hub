@@ -7,7 +7,7 @@ import { cleanText, customerIdentifier, isAppSlug } from "./validation";
 
 export interface IngestEvent {
   eventId: string;
-  kind: "error" | "metric" | "payment";
+  kind: "error" | "metric" | "payment" | "heartbeat";
   occurredAt?: string;
   customerId?: string | null;
   payload?: Record<string, unknown>;
@@ -28,10 +28,10 @@ function member(value: unknown, choices: readonly string[], fallback?: string): 
  * exact raw request body's app-specific HMAC and timestamp in the ingest route.
  * Discard unknown fields rather than persisting request bodies or arbitrary metadata.
  */
-export async function recordIngestEvent(appSlug: string, event: IngestEvent): Promise<{ accepted: true; duplicate: boolean; id?: string | null }> {
+export async function recordIngestEvent(appSlug: string, event: IngestEvent): Promise<{ accepted: true; duplicate: boolean; id?: string | null; checkId?: string }> {
   if (!isAppSlug(appSlug) || !event || typeof event !== "object" || Array.isArray(event)) invalid();
   if (typeof event.eventId !== "string" || !/^[A-Za-z0-9_.:-]{8,128}$/.test(event.eventId)) invalid("Provide a unique monitoring event ID of 8–128 characters.");
-  const kind = member(event.kind, ["error", "metric", "payment"]);
+  const kind = member(event.kind, ["error", "metric", "payment", "heartbeat"]);
   if (event.payload !== undefined && (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload))) invalid();
   const source = event.payload || event;
   const rawCustomer = event.customerId ?? source.customerId;
@@ -39,6 +39,15 @@ export async function recordIngestEvent(appSlug: string, event: IngestEvent): Pr
   if (rawCustomer && !customerId) invalid("The customer ID has an invalid format.");
   const occurredAt = event.occurredAt === undefined ? new Date() : new Date(event.occurredAt);
   if (!Number.isFinite(occurredAt.getTime()) || occurredAt.getTime() > Date.now() + 5 * 60_000 || occurredAt.getTime() < Date.UTC(2000, 0, 1)) invalid("The event time is invalid.");
+  if (kind === "heartbeat") {
+    // A signed receipt must match a fresh challenge created by this hub. It is
+    // stored separately and never enters error, usage, revenue, or ingest totals.
+    if (process.env.VERCEL_ENV !== "production" || appSlug !== "novanook" || source.source !== "novanook-server" || source.environment !== "production" || source.protocol !== 1 || rawCustomer != null || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.eventId)) invalid("The connection receipt is invalid.");
+    const { data, error } = await getHubService().rpc("hub_accept_telemetry_check", { p_app: appSlug, p_challenge_id: event.eventId, p_occurred_at: occurredAt.toISOString() }).abortSignal(AbortSignal.timeout(4000));
+    if (error) databaseError(error, "The connection receipt could not be recorded.");
+    if (data?.accepted !== true || data?.checkId !== event.eventId) throw new HubError(503, "DATABASE_UNAVAILABLE", "The connection receipt was not confirmed.");
+    return { accepted: true, duplicate: data.duplicate === true, checkId: data.checkId };
+  }
   let payload: Record<string, unknown>;
 
   if (kind === "error") {

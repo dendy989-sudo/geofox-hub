@@ -6,6 +6,7 @@ import { novaConfigured, novaCustomer, novaIsbnOverview, novaOverview, type Nova
 import { vercelHealth, websiteHealth } from "./health";
 import { supportEmailSettings } from "./email-config";
 import { isbnCallsToday, isbnServiceStatus } from "./isbn-reporting";
+import { errorCollectionHealth } from "./error-collection";
 
 interface Summary {
   openTickets: number; openErrors: number;
@@ -29,7 +30,7 @@ export function integrationInfo(context: HubContext): ConnectionInfo[] {
   return [
     { id: "hub", name: "Geofox staff & support", state: "connected", description: "Your sign-in, staff membership and app access were verified for this request.", required: true },
     ...context.apps.map(app => ({ id: `app-${app.slug}`, name: `${app.name} data bridge`, state: (app.slug === "novanook" && novaConfigured() ? "connected" : "missing") as ConnectionInfo["state"], description: app.slug === "novanook" ? "Credentials configured here do not prove connectivity. Operations runs the actual bridge check." : "Tickets and app access are available. Add a data adapter before showing customer and account totals.", required: true })),
-    ...context.apps.map(app => ({ id: `telemetry-${app.slug}`, name: `${app.name} error collection`, state: (process.env[`${app.slug.replaceAll("-", "_").toUpperCase()}_HUB_INGEST_SECRET`] ? "connected" : "missing") as ConnectionInfo["state"], description: "The hub receiver needs a signing secret; the source app must also deploy its matching reporter settings. A first accepted error confirms delivery. No errors received does not establish app health.", required: false })),
+    ...context.apps.map(app => ({ id: `telemetry-${app.slug}`, name: `${app.name} error collection`, state: ((process.env[`${app.slug.replaceAll("-", "_").toUpperCase()}_HUB_INGEST_SECRET`]?.trim().length ?? 0) >= 32 ? "connected" : "missing") as ConnectionInfo["state"], description: "Configuration only. Overview and Operations verify a signed round-trip connection with the app’s server reporter. Connection checks do not create application errors. Selected server errors are covered; browser and native crashes are separate.", required: false })),
     { id: "email", name: "Customer reply email", state: process.env.RESEND_API_KEY && supportEmailSettings() ? "connected" : "missing", description: "Optional for in-app conversations. Public-form email replies need a verified support sender and Resend key. Replies go to support@geofoxapps.com. Set RESEND_API_KEY and SUPPORT_FROM_EMAIL in Geofox hosting, then redeploy. Incoming mailbox replies are not imported automatically.", required: false },
     { id: "vercel", name: "Vercel deployment check", state: process.env.VERCEL_ACCESS_TOKEN && process.env.HUB_VERCEL_PROJECT_ID ? "connected" : "missing", description: "The hub makes read-only deployment requests using VERCEL_ACCESS_TOKEN and the configured team/project IDs. ChatGPT’s Vercel connection does not supply this runtime token. Provider bills and full runtime logs need separate data sources.", required: false },
   ];
@@ -47,7 +48,8 @@ export async function loadOverview(context: HubContext, requestedApp: string | n
   if (!summary) throw new HubError(503, "REPORTING_UNAVAILABLE", "Reporting could not be loaded.");
   const sources = await Promise.all(apps.map(async app => {
     const start = Date.now();
-    const webChecks = Promise.all([websiteHealth(app), vercelHealth(app.slug, app.name)]);
+    const errorEvent = summary.ingestion.find(row => row.appSlug === app.slug && row.kind === "error");
+    const webChecks = Promise.all([websiteHealth(app), vercelHealth(app.slug, app.name), errorCollectionHealth(context, app.slug, errorEvent?.lastAt ?? null)]);
     let data: NovaOverview | null = null;
     let databaseLatency: number | null = null;
     let isbn: IsbnProviderReport | null = null;
@@ -63,14 +65,12 @@ export async function loadOverview(context: HubContext, requestedApp: string | n
       if (isbnResult.status === "fulfilled") isbn = isbnResult.value;
       else isbnMessage = "ISBNdb request reporting could not be read. Check the reporting migration and database connection. Other account totals are independent of this check.";
     }
-    const [website, deployment] = await webChecks;
+    const [website, deployment, errorCollection] = await webChecks;
     const checkedAt = new Date().toISOString();
     const services: ServiceStatus[] = [website, { id: "database", appSlug: app.slug, name: `${app.name} database bridge`, status: data ? "healthy" : configured ? "degraded" : "unknown", detail: data ? "The account and operations summary was read successfully." : message, latencyMs: databaseLatency, checkedAt: configured ? checkedAt : null }, deployment];
     services.push(isbnServiceStatus(app.slug, isbn, data?.operations.blockedUntil ?? null, isbnMessage));
     services.push({ id: "billing", appSlug: app.slug, name: "Billing collection", status: "unknown", detail: summary.ingestion.some(row => row.appSlug === app.slug && row.kind === "payment") ? "Payment events have been recorded. Provider receipt verification and financial reconciliation are checked separately." : "A verified transaction feed has not delivered payment events to Geofox. Subscription access is available separately; access alone is not a payment, and adding billing credentials does not import transaction history.", latencyMs: null, checkedAt: null });
-    const errorEvent = summary.ingestion.find(row => row.appSlug === app.slug && row.kind === "error");
-    const receiverConfigured = Boolean(process.env[`${app.slug.replaceAll("-", "_").toUpperCase()}_HUB_INGEST_SECRET`]);
-    services.push({ id: "errors", appSlug: app.slug, name: "Application error collection", status: "unknown", detail: errorEvent ? `Latest accepted error: ${errorEvent.lastAt}. This confirms a past delivery, not continuous reporter or application health.` : receiverConfigured ? "The hub receiver is configured; no application error has arrived yet. The source reporter must be deployed with its matching settings. A quiet error feed is not a failed health check." : "The hub receiver is not configured. Add the app’s signing secret and deploy its server reporter to begin collection.", latencyMs: null, checkedAt: null });
+    services.push(errorCollection);
     return { app, data, isbn, services, message };
   }));
   const complete = sources.length > 0 && sources.every(source => source.data !== null);
