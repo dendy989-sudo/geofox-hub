@@ -4,6 +4,7 @@ import { assignableRoles } from "@/lib/hub/validation";
 import type { ErrorState, StaffRole, TicketPriority, TicketStatus } from "@/lib/hub/types";
 import { apiError, json, readJson, RequestError, sameOrigin, textValue, validUuid } from "@/lib/security/http";
 import { integrationInfo, loadCustomer, loadOperations, loadOverview } from "@/lib/integrations/reporting";
+import { errorCollectionHealth } from "@/lib/integrations/error-collection";
 import { moderateNova, novaModeration } from "@/lib/integrations/novanook";
 import { replyEmailConfigured, sendCustomerReply } from "@/lib/integrations/email";
 import { currentCustomerNotificationEmail } from "@/lib/customer/server";
@@ -56,6 +57,13 @@ async function mutate(request: Request, route: RouteContext) {
     const path = (await route.params).path;
     const name = path.join("/");
     const input = await readJson(request);
+    if (name === "operations/error-collection/check" && request.method === "POST") {
+      const app = oneApp(input.app);
+      assertCapability(context, "operations:read", app);
+      const { data, error } = await getHubService().from("hub_ingest_events").select("accepted_at").eq("app_slug", app).eq("kind", "error").order("accepted_at", { ascending: false }).limit(1).abortSignal(AbortSignal.timeout(4000)).maybeSingle();
+      if (error) throw new HubError(503, "REPORTING_UNAVAILABLE", "The latest error receipt could not be read. Please try again.");
+      return json(await errorCollectionHealth(context, app, data?.accepted_at ?? null, true));
+    }
     if (path[0] === "tickets" && path.length === 2 && request.method === "PATCH") {
       return json(await updateTicket(context, path[1], { ...(input.status !== undefined ? { status: input.status as TicketStatus } : {}), ...(input.priority !== undefined ? { priority: input.priority as TicketPriority } : {}) }));
     }

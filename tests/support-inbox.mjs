@@ -257,7 +257,7 @@ test("real PostgREST queries bound customer metadata and expose acknowledgement 
 test("read acknowledgement uses authenticated tickets:read access and POST only, with exact message IDs and same-origin protection", async () => {
   const blocked = moduleUrl(`
     const unexpected = () => { throw new Error("Unrelated dependency must not run during a read receipt"); };
-    export const integrationInfo=unexpected,loadCustomer=unexpected,loadOperations=unexpected,loadOverview=unexpected;
+    export const integrationInfo=unexpected,loadCustomer=unexpected,loadOperations=unexpected,loadOverview=unexpected,errorCollectionHealth=unexpected;
     export const moderateNova=unexpected,novaModeration=unexpected;
     export const replyEmailConfigured=unexpected,sendCustomerReply=unexpected,currentCustomerNotificationEmail=unexpected,sendInAppSupportNotification=unexpected;
     export const buildRepairBrief=unexpected;
@@ -268,6 +268,7 @@ test("read acknowledgement uses authenticated tickets:read access and POST only,
     "@/lib/hub/validation": new URL("../lib/hub/validation.ts", import.meta.url).href,
     "@/lib/security/http": http,
     "@/lib/integrations/reporting": blocked, "@/lib/integrations/novanook": blocked,
+    "@/lib/integrations/error-collection": blocked,
     "@/lib/integrations/email": blocked, "@/lib/customer/server": blocked,
     "@/lib/customer/notification": blocked, "@/lib/diagnostics/repair": blocked,
   }));
