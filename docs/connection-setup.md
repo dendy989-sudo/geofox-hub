@@ -44,7 +44,11 @@ Geofox uses the token only for read requests. A team-scoped personal token shoul
 
 NovaNook's server uses `BOOKNOOK_ISBNDB_API_KEY` in the **booknook** project. Do not copy this secret into Geofox or its browser bundle.
 
-The current bridge reads quota reservations and stored provider cooldowns. A reservation can precede a failed lookup, so it is not a completed ISBNdb call. The hub does not perform chargeable synthetic book lookups and does not yet have successful-response telemetry. Adding another API key will not turn this service badge green. A passive success/failure collector would be additional application work.
+NovaNook records the outcome of actual ISBNdb HTTP requests through a service-only database function. Geofox reads the independent `booknook_geofox_isbndb_overview` summary using its existing NovaNook server connection. The ISBNdb reporting migration belongs in NovaNook's database; no additional API key or Geofox database migration is needed.
+
+Deploy the NovaNook request recorder and Geofox reporting update after applying the additive NovaNook migration. Then use a normal uncached ISBN lookup and refresh Geofox Overview or Operations. The provider card shows recorded requests, valid successful responses, no-match responses, errors, rate limits, and the last valid response/error. Daily history begins when collection starts; earlier activity is not reconstructed. Cached results, Google Books requests, and unused quota reservations are excluded. These counts are application observations, not ISBNdb's billing statement.
+
+A valid recent response, including a genuine 404/no-match response, verifies provider reachability. Authentication, rate-limit, network, timeout, server, and invalid-response failures mark the latest observation degraded. Health becomes unknown after 24 hours without a new observation, while an active stored cooldown remains degraded. Refreshing the admin page reads recorded data and does not perform a paid synthetic lookup. A reporting read failure leaves ISBNdb metrics unknown without hiding other customer totals. Database observation writes have a short timeout and do not prevent a book lookup from completing.
 
 ## 4. Subscription access and payment reporting
 

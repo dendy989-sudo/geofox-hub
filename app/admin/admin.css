@@ -138,6 +138,19 @@
 .hub-service-state.degraded, .hub-service-state.warning { color: #b38b41; }
 .hub-service-state.down, .hub-service-state.error, .hub-service-state.failed { color: #ca6c7d; }
 .hub-service-note { margin-top: 5px; color: #aab2c2; font-size: 9px; overflow-wrap: anywhere; line-height: 1.6; }
+.hub-provider-details { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--hub-line); }
+.hub-provider-caption { display: block; color: #5a6782; font-size: 11px; line-height: 1.6; }
+.hub-provider-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 14px; margin: 12px 0; }
+.hub-provider-counts dt { color: #697792; font-size: 11px; }
+.hub-provider-counts dd { margin: 4px 0 0; color: var(--hub-ink); font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.hub-provider-history { margin: 13px 0; font-size: 11px; color: #5a6782; }
+.hub-provider-history summary { cursor: pointer; padding: 5px 0; }
+.hub-provider-history summary:focus-visible { outline: 2px solid var(--hub-purple); outline-offset: 3px; }
+.hub-provider-history-scroll { max-height: 210px; overflow: auto; }
+.hub-provider-history table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.hub-provider-history th, .hub-provider-history td { padding: 7px 4px; border-bottom: 1px solid var(--hub-line); text-align: right; font-size: 10px; }
+.hub-provider-history th:first-child { text-align: left; white-space: nowrap; }
+.hub-provider-history tbody th { font-weight: 400; }
 .hub-standalone-card { margin-bottom: 22px; }
 .hub-bottom-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 22px; }
 .hub-section-link { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 0; background: transparent; color: #8d7bc6; font-size: 10px; font-weight: 550; }
