@@ -1,6 +1,6 @@
 # Geofox support email setup
 
-Geofox already sends staff-written customer replies through Resend. GoDaddy / Microsoft 365 continues to receive mail addressed to `support@geofoxapps.com`.
+Geofox is built to send staff-written customer replies through Resend once the settings below are configured. GoDaddy / Microsoft 365 continues to receive mail addressed to `support@geofoxapps.com`.
 
 ## What this connection enables
 
