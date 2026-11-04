@@ -3,6 +3,8 @@ import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Capability, HubApp, HubBootstrap, StaffRole } from "./types";
+import { workspaceAccessFor, isWorkspaceModule } from "../workspace/access";
+import { WORKSPACE_MODULES, type WorkspacePermissions } from "../workspace/types";
 
 export class HubError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) {
@@ -102,11 +104,23 @@ export async function getHubContext(options: { allowMfaEnrollment?: boolean } = 
     slug: app.slug, name: app.name, color: app.color, website: app.website, configured: isAppConnectionConfigured(app.slug),
   }));
   const setupIssues = apps.length ? [] : ["No apps are assigned to this staff account."];
+  const { data: moduleRows, error: moduleError } = await service.from("hub_staff_modules").select("module,access_level").eq("user_id", user.id);
+  if (moduleError && !["42P01", "PGRST205"].includes(moduleError.code)) databaseError(moduleError);
+  if (moduleError) setupIssues.push("The company workspace database setup is pending.");
+  const grants: Partial<WorkspacePermissions> = {};
+  for (const row of moduleRows ?? []) if (isWorkspaceModule(row.module) && ["none", "read", "write"].includes(row.access_level)) grants[row.module] = row.access_level;
+  const workspaceAccess = workspaceAccessFor(role, grants);
+  const capabilities = capabilitiesForRole(role);
+  for (const module of WORKSPACE_MODULES) {
+    if (workspaceAccess[module].level !== "none") capabilities.push(`${module}:read`);
+    if (workspaceAccess[module].level === "write") capabilities.push(`${module}:write`);
+  }
   return {
     user: { id: user.id, email: user.email },
     staff: { role, displayName: staff.display_name },
     apps,
-    capabilities: capabilitiesForRole(role),
+    capabilities,
+    workspaceAccess,
     setupIssues,
   };
 }

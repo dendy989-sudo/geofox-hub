@@ -1,8 +1,10 @@
+import type { WorkspaceAccess } from "../workspace/types";
+
 export type StaffRole = "owner" | "admin" | "support" | "moderator" | "analyst";
-export type Capability = "overview:read" | "customers:read" | "tickets:read" | "tickets:write" | "errors:read" | "errors:write" | "moderation:read" | "moderation:write" | "operations:read" | "settings:write" | "staff:write" | "audit:read";
+export type Capability = "overview:read" | "customers:read" | "tickets:read" | "tickets:write" | "errors:read" | "errors:write" | "moderation:read" | "moderation:write" | "operations:read" | "settings:write" | "staff:write" | "audit:read" | "tasks:read" | "tasks:write" | "marketing:read" | "marketing:write" | "legal:read" | "legal:write" | "accounting:read" | "accounting:write";
 export type HealthState = "healthy" | "degraded" | "down" | "unknown";
 export interface HubApp { slug: string; name: string; color: string; website: string; configured: boolean; }
-export interface HubBootstrap { user: { id: string; email: string }; staff: { role: StaffRole; displayName: string }; apps: HubApp[]; capabilities: Capability[]; setupIssues: string[]; }
+export interface HubBootstrap { user: { id: string; email: string }; staff: { role: StaffRole; displayName: string }; apps: HubApp[]; capabilities: Capability[]; workspaceAccess: WorkspaceAccess; setupIssues: string[]; }
 export type IsbnOutcome = "success" | "not_found" | "authentication" | "rate_limited" | "unavailable" | "invalid_response" | "timeout" | "network_error";
 export interface IsbnObservation { observedAt: string; operation: "detail" | "search"; outcome: IsbnOutcome; httpStatus: number | null; latencyMs: number; }
 export interface IsbnDailyUsage { date: string; requests: number; successes: number; notFound: number; failures: number; rateLimited: number; avgLatencyMs: number | null; }
