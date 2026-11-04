@@ -1,10 +1,11 @@
 import "server-only";
 import { allowedAppSlugs, assertCapability, databaseError, getHubService, HubError, type HubContext } from "@/lib/hub/server";
 import { listAudit, listErrors, listReviewTasks, listTickets, recordAudit } from "@/lib/hub/data";
-import type { AttentionItem, ConnectionInfo, CustomerRecord, OperationsData, OverviewData, OverviewMetrics, PaymentRecord, ServiceStatus, TrendPoint } from "@/lib/hub/types";
-import { novaConfigured, novaCustomer, novaOverview, type NovaOverview } from "./novanook";
+import type { AttentionItem, ConnectionInfo, CustomerRecord, IsbnProviderReport, OperationsData, OverviewData, OverviewMetrics, PaymentRecord, ServiceStatus, TrendPoint } from "@/lib/hub/types";
+import { novaConfigured, novaCustomer, novaIsbnOverview, novaOverview, type NovaOverview } from "./novanook";
 import { vercelHealth, websiteHealth } from "./health";
 import { supportEmailSettings } from "./email-config";
+import { isbnCallsToday, isbnServiceStatus } from "./isbn-reporting";
 
 interface Summary {
   openTickets: number; openErrors: number;
@@ -46,23 +47,31 @@ export async function loadOverview(context: HubContext, requestedApp: string | n
   if (!summary) throw new HubError(503, "REPORTING_UNAVAILABLE", "Reporting could not be loaded.");
   const sources = await Promise.all(apps.map(async app => {
     const start = Date.now();
+    const webChecks = Promise.all([websiteHealth(app), vercelHealth(app.slug, app.name)]);
     let data: NovaOverview | null = null;
+    let databaseLatency: number | null = null;
+    let isbn: IsbnProviderReport | null = null;
+    let isbnMessage = "ISBNdb request reporting is not connected for this app.";
     let message = "A customer data adapter is not connected for this app.";
     let configured = false;
     if (app.slug === "novanook") {
       configured = novaConfigured();
-      try { data = await novaOverview(context); }
-      catch (error) { message = error instanceof HubError ? error.message : "The app’s data check could not be completed."; }
+      const accountRead = novaOverview(context).then(result => { databaseLatency = Date.now() - start; return result; });
+      const [accountResult, isbnResult] = await Promise.allSettled([accountRead, novaIsbnOverview(context)]);
+      if (accountResult.status === "fulfilled") data = accountResult.value;
+      else message = accountResult.reason instanceof HubError ? accountResult.reason.message : "The app’s data check could not be completed.";
+      if (isbnResult.status === "fulfilled") isbn = isbnResult.value;
+      else isbnMessage = "ISBNdb request reporting could not be read. Check the reporting migration and database connection. Other account totals are independent of this check.";
     }
-    const [website, deployment] = await Promise.all([websiteHealth(app), vercelHealth(app.slug, app.name)]);
+    const [website, deployment] = await webChecks;
     const checkedAt = new Date().toISOString();
-    const services: ServiceStatus[] = [website, { id: "database", appSlug: app.slug, name: `${app.name} database bridge`, status: data ? "healthy" : configured ? "degraded" : "unknown", detail: data ? "The account and operations summary was read successfully." : message, latencyMs: data ? Date.now() - start : null, checkedAt: configured ? checkedAt : null }, deployment];
-    services.push({ id: "isbn", appSlug: app.slug, name: "ISBNdb provider", status: data?.operations.blockedUntil ? "degraded" : "unknown", detail: data?.operations.blockedUntil ? `The stored provider cooldown is active until ${data.operations.blockedUntil}.` : "This hub reads quota reservations and stored cooldowns; it does not yet measure successful ISBNdb responses. This label alone does not mean the app’s provider key is missing. No paid test lookup is made.", latencyMs: null, checkedAt: data ? checkedAt : null });
+    const services: ServiceStatus[] = [website, { id: "database", appSlug: app.slug, name: `${app.name} database bridge`, status: data ? "healthy" : configured ? "degraded" : "unknown", detail: data ? "The account and operations summary was read successfully." : message, latencyMs: databaseLatency, checkedAt: configured ? checkedAt : null }, deployment];
+    services.push(isbnServiceStatus(app.slug, isbn, data?.operations.blockedUntil ?? null, isbnMessage));
     services.push({ id: "billing", appSlug: app.slug, name: "Billing collection", status: "unknown", detail: summary.ingestion.some(row => row.appSlug === app.slug && row.kind === "payment") ? "Payment events have been recorded. Provider receipt verification and financial reconciliation are checked separately." : "A verified transaction feed has not delivered payment events to Geofox. Subscription access is available separately; access alone is not a payment, and adding billing credentials does not import transaction history.", latencyMs: null, checkedAt: null });
     const errorEvent = summary.ingestion.find(row => row.appSlug === app.slug && row.kind === "error");
     const receiverConfigured = Boolean(process.env[`${app.slug.replaceAll("-", "_").toUpperCase()}_HUB_INGEST_SECRET`]);
     services.push({ id: "errors", appSlug: app.slug, name: "Application error collection", status: "unknown", detail: errorEvent ? `Latest accepted error: ${errorEvent.lastAt}. This confirms a past delivery, not continuous reporter or application health.` : receiverConfigured ? "The hub receiver is configured; no application error has arrived yet. The source reporter must be deployed with its matching settings. A quiet error feed is not a failed health check." : "The hub receiver is not configured. Add the app’s signing secret and deploy its server reporter to begin collection.", latencyMs: null, checkedAt: null });
-    return { app, data, services, message };
+    return { app, data, isbn, services, message };
   }));
   const complete = sources.length > 0 && sources.every(source => source.data !== null);
   const sum = (read: (data: NovaOverview) => number): number | null => {
@@ -78,7 +87,7 @@ export async function loadOverview(context: HubContext, requestedApp: string | n
   const metrics: OverviewMetrics = {
     usersTotal: sum(data => data.users.total), freeUsers: sum(data => data.users.free), paidUsers: sum(data => data.users.pro),
     adultFree: sum(data => data.users.adultFree), adultPaid: sum(data => data.users.adultPro), teenFree: sum(data => data.users.teenFree), teenPaid: sum(data => data.users.teenPro), unknownAge: sum(data => data.users.unknownAgeFree + data.users.unknownAgePro),
-    booksTotal: sum(data => data.usage.libraryBooks), searchesPeriod: sum(data => data.usage.searchReservationsMonth), isbnCallsToday: sum(data => data.usage.isbnReservationsToday), revenuePeriod: revenue,
+    booksTotal: sum(data => data.usage.libraryBooks), searchesPeriod: sum(data => data.usage.searchReservationsMonth), isbnCallsToday: isbnCallsToday(sources.map(source => source.isbn)), revenuePeriod: revenue,
     openTickets: Number(summary.openTickets), openErrors: Number(summary.openErrors), pendingModeration: sum(data => data.operations.openReports + data.operations.reviewingReports),
   };
   const trend: TrendPoint[] = [];
@@ -100,7 +109,8 @@ export async function loadOverview(context: HubContext, requestedApp: string | n
   return { period: range, metrics, trend, services: sources.flatMap(source => source.services), attention, activity, coverage: { connected: sources.filter(source => source.data).length, total: apps.length, missing: sources.filter(source => !source.data).map(source => source.app.name) }, updatedAt: new Date().toISOString(), currency, notes: [
     "Totals across apps count accounts, not unique people. If a selected app’s account source is missing, combined account and library totals remain unavailable.",
     "Verified Pro access includes valid entitlements; it is not proof of payment. Tester preview access is excluded.",
-    "Search reservations cover this UTC calendar month and include uncached attempts that may fail. ISBNdb reservations cover today in UTC; neither is a successful-response count.",
+    "Search reservations cover this UTC calendar month and include uncached attempts that may fail. ISBNdb counts are recorded provider requests today in UTC, including failures; cached results and quota reservations are excluded.",
+    "ISBNdb reporting starts when collection is installed and does not reconstruct earlier requests. Recorded requests are not a provider billing statement. Health uses the latest real request and becomes unverified after 24 hours without an observation.",
     "Saved books and signup history reflect currently retained accounts and libraries, not lifetime activity after deletion.",
     revenue === null ? `Revenue is unavailable until verified payments with known amounts in ${currency} are recorded for every selected app. Different currencies are never silently combined.` : `Revenue is recorded ${currency} receipts less recorded refunds during this period. It does not establish complete historical revenue, taxes, store fees, or payouts.`,
     "The error count covers events received by this hub. No events does not mean the app has had no errors.",

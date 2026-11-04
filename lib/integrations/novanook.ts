@@ -2,6 +2,7 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import { HubError, assertCapability, type HubContext } from "@/lib/hub/server";
 import type { ActivityItem, Capability, ListResult, ModerationItem } from "@/lib/hub/types";
+import { normalizeIsbnReport } from "./isbn-reporting";
 
 export interface NovaOverview {
   appId: "novanook"; capturedAt: string; periodStart: string; periodEnd: string;
@@ -84,6 +85,12 @@ async function rpc<T>(context: HubContext, capability: Capability, name: string,
 }
 
 export function novaOverview(context: HubContext) { return rpc<NovaOverview>(context, "overview:read", "booknook_geofox_overview", { p_days: 30 }); }
+export async function novaIsbnOverview(context: HubContext) {
+  const data = await rpc<unknown>(context, "overview:read", "booknook_geofox_isbndb_overview", { p_days: 30 });
+  const report = normalizeIsbnReport(data);
+  if (!report) throw new HubError(503, "ISBN_REPORT_INVALID", "ISBNdb request reporting returned incomplete data. Other account totals are unaffected.");
+  return report;
+}
 export function novaCustomer(context: HubContext, id: string) { return rpc<NovaCustomer>(context, "customers:read", "booknook_geofox_customer", { p_user_id: id }); }
 
 export async function novaModeration(context: HubContext, status = "unresolved"): Promise<ListResult<ModerationItem>> {

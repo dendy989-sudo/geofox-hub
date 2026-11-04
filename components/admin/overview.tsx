@@ -3,6 +3,7 @@
 import type { OverviewData, OverviewMetrics, ServiceStatus } from "@/lib/hub/types";
 import { AppBadge, Card, count, date, Empty, ErrorBanner, healthLabel, Metric, money, Notes, PageHeading, type PanelProps, useHubData } from "./common";
 import { Icon, type IconName } from "./icons";
+import { isbnOutcomeLabel } from "@/lib/integrations/isbn-reporting";
 
 const emptyMetrics: OverviewMetrics = { usersTotal: null, freeUsers: null, paidUsers: null, adultFree: null, adultPaid: null, teenFree: null, teenPaid: null, unknownAge: null, booksTotal: null, searchesPeriod: null, isbnCallsToday: null, revenuePeriod: null, openTickets: null, openErrors: null, pendingModeration: null };
 
@@ -14,7 +15,31 @@ const unknownServices: ServiceStatus[] = [
 ];
 
 export function ServiceGrid({ services, apps }: { services: ServiceStatus[]; apps: PanelProps["apps"] }) {
-  return <div className="hub-services">{services.map((service, index) => <article className="hub-service" key={`${service.appSlug}-${service.id}`}><div className="hub-service-heading"><span className="hub-service-name"><Icon name={(["globe", "layers", "book", "coins"] as IconName[])[index % 4]} size={17} />{service.name}</span><span className={`hub-dot ${service.status}`} title={healthLabel(service.status)} /></div><div className={`hub-service-state ${service.status}`}>{healthLabel(service.status)}{service.latencyMs !== null ? ` · ${service.latencyMs} ms` : ""}</div><div className="hub-service-note">{service.detail}</div>{service.checkedAt ? <div className="hub-service-note">Checked {date(service.checkedAt)}</div> : null}{apps.length > 1 ? <div style={{ marginTop: 9 }}><AppBadge slug={service.appSlug} apps={apps} /></div> : null}</article>)}</div>;
+  return <div className="hub-services">{services.map((service, index) => <article className="hub-service" key={`${service.appSlug}-${service.id}`}>
+    <div className="hub-service-heading"><span className="hub-service-name"><Icon name={service.id === "isbn" ? "book" : (["globe", "layers", "book", "coins"] as IconName[])[index % 4]} size={17} />{service.name}</span><span className={`hub-dot ${service.status}`} title={healthLabel(service.status)} /></div>
+    <div className={`hub-service-state ${service.status}`}>{healthLabel(service.status)}{service.latencyMs !== null ? ` · ${service.latencyMs} ms` : ""}</div>
+    <div className="hub-service-note">{service.detail}</div>
+    {service.checkedAt ? <div className="hub-service-note">{service.id === "isbn" ? "Observed" : "Checked"} {date(service.checkedAt)}</div> : null}
+    {service.isbn ? <IsbnRequestDetails report={service.isbn} /> : null}
+    {apps.length > 1 ? <div style={{ marginTop: 9 }}><AppBadge slug={service.appSlug} apps={apps} /></div> : null}
+  </article>)}</div>;
+}
+
+function IsbnRequestDetails({ report }: { report: NonNullable<ServiceStatus["isbn"]> }) {
+  return <div className="hub-provider-details">
+    <strong className="hub-provider-caption">Recorded requests today · UTC</strong>
+    <dl className="hub-provider-counts">
+      <div><dt>Requests</dt><dd>{count(report.today.requests)}</dd></div>
+      <div><dt>Successful</dt><dd>{count(report.today.successes)}</dd></div>
+      <div><dt>No match</dt><dd>{count(report.today.notFound)}</dd></div>
+      <div><dt>Errors</dt><dd>{count(report.today.failures)}</dd></div>
+    </dl>
+    {report.today.rateLimited > 0 ? <p className="hub-service-note">{count(report.today.rateLimited)} error(s) were rate limits.</p> : null}
+    <p className="hub-service-note">Last valid response: {report.lastSuccessAt ? date(report.lastSuccessAt) : "Awaiting first response"}</p>
+    <p className="hub-service-note">Last error: {report.lastFailure ? <>{isbnOutcomeLabel[report.lastFailure.outcome]}{report.lastFailure.httpStatus ? ` (HTTP ${report.lastFailure.httpStatus})` : ""} · {date(report.lastFailure.observedAt)}</> : "None recorded"}</p>
+    {report.daily.length > 1 ? <details className="hub-provider-history"><summary>Daily request history</summary><div className="hub-provider-history-scroll"><table aria-label="Recorded ISBNdb requests by UTC day"><thead><tr><th scope="col">Day (UTC)</th><th scope="col">Requests</th><th scope="col">Errors</th></tr></thead><tbody>{[...report.daily].sort((a, b) => b.date.localeCompare(a.date)).map(day => <tr key={day.date}><th scope="row">{day.date}</th><td>{count(day.requests)}</td><td>{count(day.failures)}</td></tr>)}</tbody></table></div></details> : null}
+    <p className="hub-service-note">Collection started {date(report.collectedSince)}. Cached books are excluded.</p>
+  </div>;
 }
 
 function total(...values: (number | null)[]) { return values.some((value) => value === null) ? null : values.reduce<number>((sum, value) => sum + (value || 0), 0); }
@@ -46,7 +71,7 @@ export function OverviewPanel(props: PanelProps) {
     </div>
     <div className="hub-overview-grid">
       <Card title="Your customer community" subtitle="Age band and verified current access" action={<Icon name="users" size={16} />}><div className="hub-card-body"><table className="hub-membership-table"><thead><tr><th scope="col">Customers</th><th scope="col">Free</th><th scope="col">Pro access</th><th scope="col">Total</th></tr></thead><tbody><tr><td><span className="hub-member-label"><span className="hub-square" />Adults · 18+</span></td><td>{count(metrics.adultFree)}</td><td>{count(metrics.adultPaid)}</td><td className="hub-table-total">{count(total(metrics.adultFree, metrics.adultPaid))}</td></tr><tr><td><span className="hub-member-label"><span className="hub-square cyan" />Teens · 13–17</span></td><td>{count(metrics.teenFree)}</td><td>{count(metrics.teenPaid)}</td><td className="hub-table-total">{count(total(metrics.teenFree, metrics.teenPaid))}</td></tr><tr><td><span className="hub-member-label"><span className="hub-square gray" />Age unavailable</span></td><td>—</td><td>—</td><td className="hub-table-total">{count(metrics.unknownAge)}</td></tr></tbody><tfoot><tr><td>All customers</td><td>{count(metrics.freeUsers)}</td><td>{count(metrics.paidUsers)}</td><td className="hub-table-total">{count(metrics.usersTotal)}</td></tr></tfoot></table><p className="hub-footnote">Only age bands are shown. Missing information stays unknown, and a dash never means zero.</p></div></Card>
-      <Card title="Usage & activity" subtitle={data ? `${data.period.label} · ${data.period.timezone}` : "Ready for your first connected source"} action={<Icon name="bolt" size={16} />}><div className="hub-card-body"><div className="hub-usage-list"><div className="hub-usage-row"><span className="hub-usage-icon"><Icon name="search" size={17} /></span><div className="hub-usage-label"><strong>Search reservations</strong><span>This UTC calendar month · recorded quota use</span></div><span className="hub-usage-number">{count(metrics.searchesPeriod)}</span></div><div className="hub-usage-row"><span className="hub-usage-icon cyan"><Icon name="book" size={17} /></span><div className="hub-usage-label"><strong>ISBNdb reservations</strong><span>Today UTC · attempts, not completed calls</span></div><span className="hub-usage-number">{count(metrics.isbnCallsToday)}</span></div><div className="hub-usage-row"><span className="hub-usage-icon orange"><Icon name="pulse" size={17} /></span><div className="hub-usage-label"><strong>Open error groups</strong><span>Review in Errors & fixes</span></div><span className="hub-usage-number">{count(metrics.openErrors)}</span></div></div></div></Card>
+      <Card title="Usage & activity" subtitle={data ? `${data.period.label} · ${data.period.timezone}` : "Ready for your first connected source"} action={<Icon name="bolt" size={16} />}><div className="hub-card-body"><div className="hub-usage-list"><div className="hub-usage-row"><span className="hub-usage-icon"><Icon name="search" size={17} /></span><div className="hub-usage-label"><strong>Search reservations</strong><span>This UTC calendar month · recorded quota use</span></div><span className="hub-usage-number">{count(metrics.searchesPeriod)}</span></div><div className="hub-usage-row"><span className="hub-usage-icon cyan"><Icon name="book" size={17} /></span><div className="hub-usage-label"><strong>ISBNdb requests</strong><span>Today UTC · recorded calls, including errors</span></div><span className="hub-usage-number">{count(metrics.isbnCallsToday)}</span></div><div className="hub-usage-row"><span className="hub-usage-icon orange"><Icon name="pulse" size={17} /></span><div className="hub-usage-label"><strong>Open error groups</strong><span>Review in Errors & fixes</span></div><span className="hub-usage-number">{count(metrics.openErrors)}</span></div></div></div></Card>
     </div>
     <Card className="hub-standalone-card" title="System health" subtitle="Green means a successful check. Gray means we don’t know yet." action={<button className="hub-section-link" onClick={() => props.navigate("operations")}>View operations <Icon name="arrow" size={13} /></button>}><ServiceGrid services={services} apps={props.apps} /></Card>
     <div className="hub-bottom-grid">
