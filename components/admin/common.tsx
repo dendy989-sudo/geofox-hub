@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ApiEnvelope, HealthState, HubApp, ListResult, StaffRole } from "@/lib/hub/types";
+import type { WorkspaceAccess } from "@/lib/workspace/types";
 import { Icon, type IconName } from "./icons";
 
 export async function apiRequest<T>(url: string, options?: RequestInit): Promise<T> {
@@ -111,10 +112,10 @@ export function healthLabel(status: HealthState) {
   return { healthy: "Operational", degraded: "Needs attention", down: "Service issue", unknown: "Not verified" }[status] || "Not verified";
 }
 
-export function Modal({ title, description, children, actions, onClose }: { title: string; description?: string; children: React.ReactNode; actions?: React.ReactNode; onClose: () => void }) {
+export function Modal({ title, description, children, actions, onClose, wide = false }: { title: string; description?: string; children: React.ReactNode; actions?: React.ReactNode; onClose: () => void; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
-  return <dialog ref={ref} className="hub-modal" onCancel={(event) => { event.preventDefault(); onClose(); }} aria-labelledby="hub-modal-title"><header className="hub-modal-head"><div><h2 id="hub-modal-title">{title}</h2>{description ? <p>{description}</p> : null}</div><button className="hub-icon-button" type="button" aria-label="Close dialog" onClick={onClose}><Icon name="close" size={17} /></button></header><div className="hub-modal-body">{children}</div>{actions ? <div className="hub-modal-actions">{actions}</div> : null}</dialog>;
+  return <dialog ref={ref} className={`hub-modal${wide ? " hub-modal-wide" : ""}`} onCancel={(event) => { event.preventDefault(); onClose(); }} aria-labelledby="hub-modal-title"><header className="hub-modal-head"><div><h2 id="hub-modal-title">{title}</h2>{description ? <p>{description}</p> : null}</div><button className="hub-icon-button" type="button" aria-label="Close dialog" onClick={onClose}><Icon name="close" size={17} /></button></header><div className="hub-modal-body">{children}</div>{actions ? <div className="hub-modal-actions">{actions}</div> : null}</dialog>;
 }
 
 export function listNotes<T>(data: ListResult<T> | null, preview: boolean, noun: string) {
@@ -126,4 +127,4 @@ export function Pagination({ offset, limit, total, loaded, disabled, onPage }: {
   return <div className="hub-pagination"><span>{total ? `${count(offset + 1)}–${count(offset + loaded)} of ${count(total)}` : "No matching records"}</span><div><button type="button" className="hub-button secondary small" disabled={disabled || offset === 0} onClick={() => onPage(Math.max(0, offset - limit))}>Previous</button><button type="button" className="hub-button secondary small" disabled={disabled || offset + limit >= total || offset >= 10000} onClick={() => onPage(offset + limit)}>Next</button></div></div>;
 }
 
-export interface PanelProps { preview: boolean; app: string; apps: HubApp[]; refreshKey: number; staffRole?: StaffRole; notify: (message: string) => void; can: (capability: string) => boolean; navigate: (tab: string) => void; }
+export interface PanelProps { preview: boolean; app: string; apps: HubApp[]; refreshKey: number; staffRole?: StaffRole; workspaceAccess?: WorkspaceAccess; notify: (message: string) => void; can: (capability: string) => boolean; navigate: (tab: string) => void; }
