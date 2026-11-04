@@ -77,7 +77,7 @@ type NovaNookOverview = {
 | Tester preview | `booknook_plan_testers.preview`, shown separately in a customer record | Never counted as a verified Pro entitlement |
 | Current saved books | Count of `booknook_library_books` | Not lifetime books added; deleting a book/account reduces it |
 | Search reservations | Sum of `booknook_search_usage.used`, optionally for the current UTC calendar month | Uncached quota reservations, including an attempt that may later fail; excludes cached searches; not a daily or arbitrary-period series; deleted users lose their rows |
-| ISBNdb reservations today | `isbndb_request_budget` row with `budget_key = 'provider'`, `daily_count` only if its `day` equals today in UTC | Budget reservations occur before the external call; no stored historical daily series or quota limit is available |
+| Recorded ISBNdb requests today | Independent service-only `booknook_geofox_isbndb_overview` summary | Actual recorded provider HTTP outcomes, including errors; cache hits, Google requests and quota-only reservations are excluded. History starts at collection, and these are not provider-billed units. |
 | Recent sign-ins | Current accounts with `auth.users.last_sign_in_at` inside the UTC period | Last Auth sign-in is not in-app activity, sessions, or daily active users |
 | Daily signups | Current accounts grouped by Auth creation date, with zero-filled UTC days | It is not a complete historical signup ledger after account deletion |
 | Reading sessions / minutes | Valid `booknook_library_books.data.readingLog` entries; uses saved integer seconds where available and otherwise rounded minutes × 60 | Current saved library only; manual logs included; no private titles, notes or logs are returned; extreme unsafe numeric totals return null |
