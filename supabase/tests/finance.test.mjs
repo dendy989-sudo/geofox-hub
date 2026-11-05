@@ -37,6 +37,12 @@ const readonlyMigration = await readFile(new URL('../migrations/20261105170745_f
 await db.exec(readonlyMigration);
 const customVendorsMigration = await readFile(new URL('../migrations/20261105175613_finance_custom_dates_vendors.sql', import.meta.url), 'utf8');
 await db.exec(customVendorsMigration);
+const legacyBill=entry(), legacyIncome=entry({kind:'income',title:'Existing income'});
+await mutate('save_entry',legacyBill); await mutate('save_entry',legacyIncome);
+const legacyPayment={id:randomUUID(),entry_id:legacyBill.id,amount_cents:2000,paid_on:'2026-01-15'};
+await mutate('record_payment',legacyPayment);
+const accountsMigration = await readFile(new URL('../migrations/20261105184742_finance_accounts_balances_goals.sql', import.meta.url), 'utf8');
+await db.exec(accountsMigration);
 async function one(sql, params = []) { return (await db.query(sql, params)).rows[0]; }
 async function mutate(action, payload, actor = owner, validate = true) {
   const p = validate ? validateFinanceMutation(action, payload).payload : payload;
@@ -48,17 +54,22 @@ function entry(extra = {}) { return {id:randomUUID(),kind:'bill',title:'Electric
 function plan(extra = {}) { return {id:randomUUID(),title:'Car repair',creditor:'Repair shop',kind:'installment',category:'Car',total_amount_cents:10001,opening_paid_cents:1000,installment_amount_cents:3000,frequency:'monthly',first_due_date:'2026-01-31',notes:'',...extra}; }
 function debt(extra = {}) { return {id:randomUUID(),title:'Old account',stage:'credit_report',original_creditor:'Original company',collector:'Collector',original_balance_cents:10000,current_balance_cents:10000,status:'open',date_added:'2026-01-01',notes:'',...extra}; }
 function vendor(extra = {}) { return {id:randomUUID(),name:`Vendor ${randomUUID()}`,url:'https://example.test/',notes:'',...extra}; }
+function account(extra = {}) { return {id:randomUUID(),name:'Daily checking',institution:'Example bank',kind:'checking',last_four:'1234',opening_date:'2026-01-01',opening_balance_cents:100000,credit_limit_cents:null,notes:'',...extra}; }
+function transfer(from,to,extra = {}) { return {id:randomUUID(),from_account_id:from,to_account_id:to,amount_cents:10000,date:'2026-01-15',status:'completed',notes:'',...extra}; }
+function goal(accountId,extra = {}) { return {id:randomUUID(),account_id:accountId,title:'Emergency savings',target_cents:100000,allocated_cents:0,start_date:'2026-01-01',target_date:null,notes:'',...extra}; }
+async function actual(accountId,asOf='2026-11-05',actor=owner) { return Number((await one('select public.finance_actual_account_balance($1,$2,$3::date) balance',[actor,accountId,asOf])).balance); }
 
 // Shared in-memory database is intentional: every write is scoped to a distinct ID.
 test('migrations are repeatable under Supabase default grants, all tables use RLS, functions are invokers, browser roles cannot access finance', async () => {
   await db.exec(migration);
   await db.exec(readonlyMigration);
   await db.exec(customVendorsMigration);
+  await db.exec(accountsMigration);
   assert.deepEqual((await db.query('select user_id from public.finance_access')).rows.map(r=>r.user_id), [owner]);
   const tables = (await db.query("select c.relname,c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relname like 'finance_%' and relkind='r'")).rows;
-  assert.equal(tables.length,11); assert.ok(tables.every(t=>t.relrowsecurity));
+  assert.equal(tables.length,16); assert.ok(tables.every(t=>t.relrowsecurity));
   const functions=(await db.query("select proname,prosecdef from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).rows;
-  assert.equal(functions.length,8); assert.ok(functions.every(f=>f.prosecdef===false));
+  assert.equal(functions.length,12); assert.ok(functions.every(f=>f.prosecdef===false));
   for (const role of ['anon','authenticated']) {
     assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and has_function_privilege($1,p.oid,'EXECUTE')",[role])).n,0);
   }
@@ -75,6 +86,9 @@ test('migrations are repeatable under Supabase default grants, all tables use RL
   await mutate('record_payment',{id:randomUUID(),entry_id:serviceEntry.id,amount_cents:100,paid_on:'2026-01-15'});
   const serviceVendor=vendor(); await mutate('save_vendor',serviceVendor);
   await denied(()=>db.query('delete from public.finance_vendors where id=$1',[serviceVendor.id]),'42501');
+  const serviceAccount=account({kind:'savings'}); await mutate('save_account',serviceAccount);
+  assert.equal(await actual(serviceAccount.id),100000);
+  await mutate('save_goal',goal(serviceAccount.id,{allocated_cents:1000}));
   assert.ok((await snapshot()).entries.some(e=>e.id===serviceEntry.id));
   await db.exec('reset role');
 });
@@ -503,9 +517,328 @@ test('SQL rejects unsafe vendor URLs and treats SQL-like names and URLs as data'
 });
 
 test('custom/vendor migration can be reapplied with financial history and preserves private grants', async () => {
-  const before=await snapshot(); await db.exec(customVendorsMigration); const after=await snapshot();
+  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); const after=await snapshot();
   assert.deepEqual(after,before);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_vendors','DELETE,TRUNCATE,TRIGGER,REFERENCES') granted")).granted,false);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
+});
+
+test('account migration preserves legacy cash history and backfills reminders only once', async () => {
+  let s=await snapshot();
+  assert.equal(s.entries.find(e=>e.id===legacyBill.id).reminder_days,3);
+  assert.equal(s.entries.find(e=>e.id===legacyIncome.id).reminder_days,null);
+  const p=s.payments.find(p=>p.id===legacyPayment.id);
+  assert.equal(p.account_id,null); assert.equal(p.payment_method,'manual'); assert.equal(p.amount_cents,2000);
+  await mutate('save_entry',{...legacyBill,reminder_days:null});
+  await mutate('save_entry',{...legacyIncome,reminder_days:5});
+  await db.exec(accountsMigration); s=await snapshot();
+  assert.equal(s.entries.find(e=>e.id===legacyBill.id).reminder_days,null);
+  assert.equal(s.entries.find(e=>e.id===legacyIncome.id).reminder_days,5);
+  const a=account(); await mutate('save_account',a);
+  await mutate('save_entry',{...legacyBill,account_id:a.id,payment_method:'autopay'});
+  await mutate('record_payment',legacyPayment);
+  assert.equal(await actual(a.id),100000,'An old unassigned payment must not move when its bill gets an account');
+  assert.equal((await snapshot()).payments.find(p=>p.id===legacyPayment.id).account_id,null);
+});
+
+test('account, method, reminder, transfer and goal input validation rejects ambiguous financial input', () => {
+  assert.equal(validateFinanceMutation('save_account',account({opening_balance_cents:-2500})).payload.opening_balance_cents,-2500);
+  for (const last_four of ['123','12345','12x4']) assert.throws(()=>validateFinanceMutation('save_account',account({last_four})));
+  assert.throws(()=>validateFinanceMutation('save_account',account({credit_limit_cents:10000})));
+  assert.throws(()=>validateFinanceMutation('save_entry',entry({kind:'income',payment_method:'autopay'})));
+  assert.throws(()=>validateFinanceMutation('save_entry',entry({payment_method:'direct_deposit'})));
+  for (const reminder_days of [-1,31,1.5,'3']) assert.throws(()=>validateFinanceMutation('save_entry',entry({reminder_days})));
+  assert.equal(validateFinanceMutation('save_entry',entry({reminder_days:null})).payload.reminder_days,null);
+  assert.equal(Object.hasOwn(validateFinanceMutation('save_entry',entry()).payload,'reminder_days'),false);
+  const id=randomUUID(); assert.throws(()=>validateFinanceMutation('save_transfer',transfer(id,id.toUpperCase())));
+  assert.throws(()=>validateFinanceMutation('save_goal',goal(id,{target_date:'2025-12-31'})));
+  assert.throws(()=>validateFinanceMutation('save_goal',goal(id,{allocated_cents:-1})));
+  assert.equal(Object.hasOwn(validateFinanceMutation('save_goal',goal(id,{user_id:secondOwner,achieved_milestones:[100]})).payload,'achieved_milestones'),false);
+});
+
+test('actual balances use start-of-day anchors, include same-day posted flows, and ignore forecasts', async () => {
+  const a=account({kind:'savings',opening_date:'2026-01-10'}); await mutate('save_account',a);
+  const historical=entry({kind:'income',account_id:a.id,amount_cents:5000,original_due_date:'2026-01-05',scheduled_date:'2026-01-05'});
+  await mutate('save_entry',historical); await mutate('record_payment',{id:randomUUID(),entry_id:historical.id,amount_cents:5000,paid_on:'2026-01-05'});
+  assert.equal(await actual(a.id,'2026-01-09'),0);
+  const income=entry({kind:'income',account_id:a.id,amount_cents:10000}),bill=entry({account_id:a.id,amount_cents:3000});
+  await mutate('save_entry',income); await mutate('save_entry',bill);
+  await mutate('record_payment',{id:randomUUID(),entry_id:income.id,amount_cents:10000,paid_on:'2026-01-10'});
+  await mutate('record_payment',{id:randomUUID(),entry_id:bill.id,amount_cents:3000,paid_on:'2026-01-10'});
+  assert.equal(await actual(a.id,'2026-01-10'),107000);
+  await mutate('save_balance_update',{account_id:a.id,date:'2026-01-10',balance_cents:200000});
+  assert.equal(await actual(a.id,'2026-01-10'),207000,'Same-day correction wins the opening, then the day flows');
+  await mutate('save_balance_update',{account_id:a.id,date:'2026-01-20',balance_cents:50000});
+  const nextIncome=entry({kind:'income',account_id:a.id,amount_cents:2000}),nextBill=entry({account_id:a.id,amount_cents:500});
+  await mutate('save_entry',nextIncome); await mutate('save_entry',nextBill);
+  await mutate('record_payment',{id:randomUUID(),entry_id:nextIncome.id,amount_cents:2000,paid_on:'2026-01-20'});
+  await mutate('record_payment',{id:randomUUID(),entry_id:nextBill.id,amount_cents:500,paid_on:'2026-01-20'});
+  await mutate('entry_status',{id:nextBill.id,status:'cancelled',archived:true});
+  await mutate('save_entry',entry({kind:'income',account_id:a.id,amount_cents:900000,scheduled_date:'2026-01-21'}));
+  await mutate('save_spending',{id:randomUUID(),account_id:a.id,date:'2026-01-20',amount_cents:10000,title:'Scenario only'});
+  assert.equal(await actual(a.id,'2026-01-20'),51500);
+  await mutate('save_balance_update',{account_id:a.id,date:'2100-01-01',balance_cents:1000000000000});
+  assert.equal(await actual(a.id,'2026-01-20'),51500,'Future anchors cannot change earlier actual funds');
+  await mutate('save_balance_update',{account_id:a.id,date:'2026-01-01',balance_cents:40000});
+  assert.equal(await actual(a.id,'2026-01-05'),45000,'An earlier explicit correction establishes earlier tracking');
+  assert.equal(await actual(a.id,'2026-01-10'),207000);
+});
+
+test('dated balance upserts keep one row per owned account/date including the unassigned scope', async () => {
+  const a=account(); await mutate('save_account',a);
+  for (const account_id of [a.id,null]) {
+    const first=await mutate('save_balance_update',{id:randomUUID(),account_id,date:'2026-02-01',balance_cents:-1234});
+    const second=await mutate('save_balance_update',{id:randomUUID(),account_id,date:'2026-02-01',balance_cents:2500,notes:'Corrected'});
+    assert.equal(first.id,second.id);
+    const rows=(await snapshot()).balance_updates.filter(b=>b.account_id===account_id && b.date==='2026-02-01');
+    assert.equal(rows.length,1); assert.equal(rows[0].balance_cents,2500);
+    await denied(()=>db.query('insert into public.finance_balance_updates(user_id,account_id,date,balance_cents) values($1,$2,$3,10)',[owner,account_id,'2026-02-01']),'23505');
+    await mutate('remove_balance_update',{id:first.id}); await mutate('remove_balance_update',{id:first.id});
+  }
+});
+
+test('completed transfers conserve combined money and card payments reduce the negative card balance', async () => {
+  const bank=account(),savings=account({kind:'savings',opening_balance_cents:20000}),card=account({kind:'credit_card',opening_balance_cents:-30000,credit_limit_cents:100000});
+  for(const a of [bank,savings,card]) await mutate('save_account',a);
+  const charge=entry({account_id:card.id,payment_method:'credit_card',amount_cents:2000}); await mutate('save_entry',charge);
+  await mutate('record_payment',{id:randomUUID(),entry_id:charge.id,amount_cents:2000,paid_on:'2026-01-15'});
+  assert.equal(await actual(card.id),-32000);
+  const before=await snapshot(),payment=transfer(bank.id,card.id); await mutate('save_transfer',payment); await mutate('save_transfer',payment);
+  assert.equal(await actual(bank.id),90000); assert.equal(await actual(card.id),-22000);
+  assert.equal(await actual(bank.id)+await actual(savings.id)+await actual(card.id),88000);
+  let s=await snapshot(); assert.equal(s.transfers.filter(t=>t.id===payment.id).length,1);
+  assert.equal(s.payments.length,before.payments.length); assert.equal(s.entries.length,before.entries.length);
+  const planned=transfer(bank.id,savings.id,{status:'planned',amount_cents:5000}); await mutate('save_transfer',planned);
+  assert.equal(await actual(savings.id),20000);
+  await mutate('transfer_status',{id:planned.id,status:'completed'}); assert.equal(await actual(savings.id),25000); assert.equal(await actual(bank.id),85000);
+  await mutate('transfer_status',{id:planned.id,status:'cancelled'}); assert.equal(await actual(savings.id),20000); assert.equal(await actual(bank.id),90000);
+  const future=transfer(bank.id,savings.id,{date:'2100-01-01',status:'planned'}); await mutate('save_transfer',future);
+  await denied(()=>mutate('transfer_status',{id:future.id,status:'completed'}));
+  assert.equal((await snapshot()).transfers.find(t=>t.id===future.id).status,'planned');
+  await denied(()=>mutate('save_transfer',transfer(bank.id,savings.id,{date:'2100-01-01'})));
+  await denied(()=>mutate('save_transfer',transfer(bank.id,bank.id),owner,false));
+});
+
+test('transfer tracking guards allow earlier replacement anchors and unrestricted amount corrections', async () => {
+  const a=account({opening_date:'2026-01-10'}),b=account(); await mutate('save_account',a); await mutate('save_account',b);
+  const t=transfer(a.id,b.id,{date:'2026-01-05'}); await denied(()=>mutate('save_transfer',t));
+  const first=await mutate('save_balance_update',{account_id:a.id,date:'2026-01-01',balance_cents:100000}); await mutate('save_transfer',t);
+  await denied(()=>mutate('remove_balance_update',{id:first.id}));
+  await denied(()=>mutate('save_balance_update',{id:first.id,account_id:a.id,date:'2026-01-06',balance_cents:100000}));
+  await denied(()=>mutate('save_balance_update',{id:first.id,account_id:null,date:'2026-01-01',balance_cents:100000}));
+  const replacement=await mutate('save_balance_update',{account_id:a.id,date:'2025-12-31',balance_cents:100000});
+  await mutate('remove_balance_update',{id:first.id});
+  await mutate('save_balance_update',{id:replacement.id,account_id:a.id,date:'2025-12-31',balance_cents:-500});
+  assert.equal(await actual(a.id,'2026-01-05'),-10500,'Amount corrections may record a negative real balance');
+  await denied(()=>mutate('remove_balance_update',{id:replacement.id}));
+  await mutate('transfer_status',{id:t.id,status:'cancelled'}); await mutate('remove_balance_update',{id:replacement.id});
+  await denied(()=>mutate('transfer_status',{id:t.id,status:'completed'}));
+  const c=account(); await mutate('save_account',c); await mutate('save_transfer',transfer(c.id,b.id,{date:'2026-01-05'}));
+  await denied(()=>mutate('save_account',{...c,opening_date:'2026-01-06'}));
+  await mutate('save_account',{...c,opening_balance_cents:-100});
+});
+
+test('payment account and method snapshots survive entry edits, partial payments, retries and reversals', async () => {
+  const a=account(),b=account(),c=account({kind:'cash',last_four:null}); for(const x of [a,b,c]) await mutate('save_account',x);
+  const e=entry({account_id:a.id,payment_method:'autopay',reminder_days:5}); await mutate('save_entry',e);
+  const first={id:randomUUID(),entry_id:e.id,amount_cents:4000,paid_on:'2026-01-15'}; await mutate('record_payment',first);
+  await mutate('save_entry',{...e,account_id:b.id,payment_method:'bank_transfer',reminder_days:null});
+  await mutate('record_payment',first);
+  await denied(()=>mutate('record_payment',{...first,account_id:b.id,payment_method:'bank_transfer'}));
+  const second={id:randomUUID(),entry_id:e.id,amount_cents:2000,paid_on:'2026-01-16',account_id:c.id,payment_method:'cash'}; await mutate('record_payment',second);
+  await mutate('record_payment',{id:randomUUID(),entry_id:e.id,amount_cents:4000,paid_on:'2026-01-17'});
+  await mutate('save_entry',{...e,account_id:null,payment_method:'manual'});
+  assert.equal(await actual(a.id),96000); assert.equal(await actual(b.id),96000); assert.equal(await actual(c.id),98000);
+  const s=await snapshot(); assert.equal(s.payments.find(p=>p.id===first.id).account_id,a.id); assert.equal(s.payments.find(p=>p.id===first.id).payment_method,'autopay');
+  await mutate('remove_payment',{id:second.id}); await mutate('record_payment',second); assert.equal(await actual(c.id),100000);
+  await denied(()=>mutate('record_payment',{id:randomUUID(),entry_id:e.id,amount_cents:1,paid_on:'2026-01-18',payment_method:'direct_deposit'}));
+  const income=entry({kind:'income',account_id:a.id,payment_method:'direct_deposit',amount_cents:5000}); await mutate('save_entry',income);
+  await mutate('record_payment',{id:randomUUID(),entry_id:income.id,amount_cents:5000,paid_on:'2026-01-20'});
+  assert.equal(await actual(a.id),101000);
+});
+
+test('series inherit payment settings and plan changes update active unpaid forecasts without moving posted history', async () => {
+  const a=account(),b=account(); await mutate('save_account',a); await mutate('save_account',b);
+  const recurring=entry({kind:'income',account_id:a.id,payment_method:'direct_deposit',reminder_days:2,frequency:'custom',custom_mode:'month_days',custom_month_days:[15,31],end_date:'2026-03-31'});
+  await mutate('save_entry',recurring); let s=await snapshot(); const series=s.entries.find(e=>e.id===recurring.id).series_id;
+  assert.ok(s.entries.filter(e=>e.series_id===series).every(e=>e.account_id===a.id && e.payment_method==='direct_deposit' && e.reminder_days===2));
+  await mutate('save_entry',{...recurring,frequency:'once',account_id:b.id,payment_method:'cash',reminder_days:0});
+  s=await snapshot(); assert.equal(s.series.find(x=>x.id===series).account_id,a.id);
+  assert.ok(s.entries.filter(e=>e.series_id===series && e.id!==recurring.id).every(e=>e.account_id===a.id));
+  const p=plan({account_id:a.id,payment_method:'autopay',reminder_days:3}); await mutate('save_plan',p);
+  const children=(await snapshot()).entries.filter(e=>e.plan_id===p.id);
+  const paid={id:randomUUID(),entry_id:children[0].id,amount_cents:3000,paid_on:'2026-01-31'}; await mutate('record_payment',paid);
+  const partial={id:randomUUID(),entry_id:children[1].id,amount_cents:1000,paid_on:'2026-02-28'}; await mutate('record_payment',partial);
+  await mutate('entry_status',{id:children[2].id,status:'cancelled'});
+  await mutate('save_entry',{...children[3],account_id:b.id,payment_method:'cash',reminder_days:7});
+  await mutate('entry_status',{id:children[3].id,status:'active',archived:true});
+  await mutate('save_plan',{...p,reminder_days:8});
+  s=await snapshot(); let last=s.entries.find(e=>e.id===children[3].id);
+  assert.equal(last.account_id,b.id); assert.equal(last.payment_method,'cash'); assert.equal(last.reminder_days,8);
+  assert.equal(s.entries.find(e=>e.id===children[0].id).reminder_days,3);
+  await mutate('save_plan',{...p,account_id:b.id,payment_method:'bank_transfer',reminder_days:8}); s=await snapshot();
+  assert.equal(s.entries.find(e=>e.id===children[0].id).account_id,a.id);
+  assert.equal(s.entries.find(e=>e.id===children[2].id).account_id,a.id);
+  assert.equal(s.entries.find(e=>e.id===children[1].id).account_id,b.id);
+  last=s.entries.find(e=>e.id===children[3].id); assert.equal(last.account_id,b.id); assert.equal(last.payment_method,'bank_transfer');
+  for(const payment of [paid,partial]) { const recorded=s.payments.find(x=>x.id===payment.id); assert.equal(recorded.account_id,a.id); assert.equal(recorded.payment_method,'autopay'); }
+  assert.equal(await actual(a.id),96000); assert.equal(await actual(b.id),100000);
+});
+
+test('spending scopes and reminder snoozes remain owned and separate from posted cash', async () => {
+  const a=account(),b=account(); await mutate('save_account',a); await mutate('save_account',b);
+  const items=[a.id,b.id,null].map(account_id=>({id:randomUUID(),account_id,date:'2026-04-15',amount_cents:20000,title:'Scenario'}));
+  for(const item of items) await mutate('save_spending',item);
+  const {account_id:omitted,...legacyEdit}=items[0]; await mutate('save_spending',{...legacyEdit,amount_cents:10000});
+  assert.equal((await snapshot()).spending.find(x=>x.id===items[0].id).account_id,a.id);
+  await mutate('clear_spending',{month:'2026-04',account_id:a.id}); let s=await snapshot();
+  assert.ok(!s.spending.some(x=>x.id===items[0].id)); assert.ok(s.spending.some(x=>x.id===items[1].id)); assert.ok(s.spending.some(x=>x.id===items[2].id));
+  await mutate('clear_spending',{month:'2026-04',account_id:null}); s=await snapshot(); assert.ok(!s.spending.some(x=>x.id===items[2].id));
+  assert.equal(await actual(b.id),100000); await mutate('clear_spending',{month:'2026-04'});
+  const e=entry({account_id:a.id,reminder_days:0}); await mutate('save_entry',e);
+  await mutate('snooze_reminder',{id:e.id,until:'2026-02-10'});
+  assert.equal((await snapshot()).entries.find(x=>x.id===e.id).reminder_snoozed_until,'2026-02-10');
+  await denied(()=>mutate('snooze_reminder',{id:e.id,until:null},secondOwner),'P0002');
+  await mutate('snooze_reminder',{id:e.id,until:null}); assert.equal((await snapshot()).entries.find(x=>x.id===e.id).reminder_snoozed_until,null);
+});
+
+test('savings milestones are awarded once and persist through allocation reductions and target changes', async () => {
+  const a=account({kind:'savings',opening_balance_cents:200000}); await mutate('save_account',a);
+  const g=goal(a.id,{allocated_cents:25000});
+  assert.deepEqual((await mutate('save_goal',g)).milestones,[25]);
+  assert.deepEqual((await mutate('save_goal',g)).milestones,[]);
+  assert.equal((await one('select count(*)::int n from public.finance_goal_history where goal_id=$1',[g.id])).n,1);
+  assert.deepEqual((await mutate('save_goal',{...g,allocated_cents:50000,change_note:'Added to emergency savings'})).milestones,[50]);
+  assert.deepEqual((await mutate('save_goal',{...g,allocated_cents:10000})).milestones,[]);
+  assert.deepEqual((await mutate('save_goal',{...g,target_cents:10000,allocated_cents:10000})).milestones,[75,100]);
+  assert.deepEqual((await mutate('save_goal',{...g,target_cents:200000,allocated_cents:200000})).milestones,[]);
+  let s=await snapshot(); assert.deepEqual(s.goals.find(x=>x.id===g.id).achieved_milestones,[25,50,75,100]);
+  assert.equal(await actual(a.id),200000,'Allocations reserve existing funds without spending them');
+  await mutate('goal_status',{id:g.id,archived:true});
+  assert.deepEqual((await mutate('goal_status',{id:g.id,archived:false})).milestones,undefined);
+  s=await snapshot(); assert.deepEqual(s.goals.find(x=>x.id===g.id).achieved_milestones,[25,50,75,100]);
+  assert.ok(s.goal_history.some(h=>h.goal_id===g.id && h.previous_allocated_cents===null && h.allocated_cents===25000));
+  assert.ok(s.goal_history.some(h=>h.goal_id===g.id && h.note==='Added to emergency savings'));
+});
+
+test('goals cannot reserve the same savings twice and failed changes leave allocation/history untouched', async () => {
+  const a=account({kind:'savings'}); await mutate('save_account',a);
+  const first=goal(a.id,{allocated_cents:60000}),second=goal(a.id,{allocated_cents:40001});
+  await mutate('save_goal',first); await denied(()=>mutate('save_goal',second));
+  assert.equal((await one('select count(*)::int n from public.finance_savings_goals where id=$1',[second.id])).n,0);
+  assert.equal((await one('select count(*)::int n from public.finance_goal_history where goal_id=$1',[second.id])).n,0);
+  await mutate('save_goal',{...second,allocated_cents:40000});
+  const before=await snapshot(); await denied(()=>mutate('save_goal',{...first,allocated_cents:60001}));
+  const after=await snapshot();
+  assert.deepEqual(after.goals.filter(g=>g.account_id===a.id),before.goals.filter(g=>g.account_id===a.id));
+  assert.deepEqual(after.goal_history.filter(h=>h.goal_id===first.id),before.goal_history.filter(h=>h.goal_id===first.id));
+  const raw=goal(a.id,{target_cents:0}); await denied(()=>mutate('save_goal',raw,owner,false),'23514');
+  assert.equal((await one('select count(*)::int n from public.finance_goal_history where goal_id=$1',[raw.id])).n,0);
+  const concurrent=account({kind:'savings',opening_balance_cents:70000}); await mutate('save_account',concurrent);
+  const attempts=await Promise.allSettled([mutate('save_goal',goal(concurrent.id,{allocated_cents:40000})),mutate('save_goal',goal(concurrent.id,{allocated_cents:40000}))]);
+  assert.equal(attempts.filter(x=>x.status==='fulfilled').length,1); assert.equal(attempts.filter(x=>x.status==='rejected').length,1);
+  assert.equal(Number((await one('select sum(allocated_cents) n from public.finance_savings_goals where account_id=$1',[concurrent.id])).n),40000);
+});
+
+test('real balance corrections and lower or unchanged allocations remain possible after savings fall', async () => {
+  const a=account({kind:'savings'}); await mutate('save_account',a);
+  const first=goal(a.id,{allocated_cents:60000}),second=goal(a.id,{allocated_cents:40000}); await mutate('save_goal',first); await mutate('save_goal',second);
+  const today=(await snapshot()).today;
+  await mutate('save_balance_update',{account_id:a.id,date:today,balance_cents:10000});
+  await mutate('save_goal',{...first,notes:'Cash balance corrected without hiding the old earmark'});
+  await mutate('save_goal',{...first,allocated_cents:50000});
+  await denied(()=>mutate('save_goal',{...first,allocated_cents:50001}));
+  await mutate('save_goal',goal(a.id,{allocated_cents:0,title:'Future goal'}));
+  await denied(()=>mutate('save_goal',goal(a.id,{allocated_cents:1})));
+  await mutate('goal_status',{id:first.id,archived:false});
+  await mutate('goal_status',{id:second.id,archived:true}); await denied(()=>mutate('goal_status',{id:second.id,archived:false}));
+  await mutate('save_goal',{...second,allocated_cents:0}); await mutate('goal_status',{id:second.id,archived:false});
+  await mutate('goal_status',{id:first.id,archived:true});
+  await mutate('save_balance_update',{account_id:a.id,date:'2100-01-01',balance_cents:1000000000000});
+  await denied(()=>mutate('save_goal',goal(a.id,{allocated_cents:10001})));
+  await mutate('save_balance_update',{account_id:a.id,date:today,balance_cents:-500});
+  await mutate('save_goal',goal(a.id,{allocated_cents:0,title:'Empty goal despite a deficit'}));
+  await denied(()=>mutate('save_goal',goal(a.id,{allocated_cents:1})));
+  assert.equal(await actual(a.id,today),-500);
+});
+
+test('only completed transfers and received income fund savings goals, with no duplicate cash movement', async () => {
+  const bank=account(),savings=account({kind:'savings',opening_balance_cents:0}); await mutate('save_account',bank); await mutate('save_account',savings);
+  const t=transfer(bank.id,savings.id,{amount_cents:20000,status:'planned'}); await mutate('save_transfer',t);
+  const g=goal(savings.id,{target_cents:80000,allocated_cents:20000}); await denied(()=>mutate('save_goal',g));
+  const forecast=entry({kind:'income',account_id:savings.id,payment_method:'direct_deposit',amount_cents:100000}); await mutate('save_entry',forecast);
+  await denied(()=>mutate('save_goal',g));
+  await mutate('transfer_status',{id:t.id,status:'completed'}); assert.deepEqual((await mutate('save_goal',g)).milestones,[25]);
+  assert.equal(await actual(bank.id)+await actual(savings.id),100000);
+  await mutate('transfer_status',{id:t.id,status:'cancelled'}); assert.equal(await actual(savings.id),0);
+  await denied(()=>mutate('save_goal',{...g,allocated_cents:20001}));
+  await mutate('save_goal',{...g,allocated_cents:10000});
+  await mutate('record_payment',{id:randomUUID(),entry_id:forecast.id,amount_cents:15000,paid_on:'2026-01-15'});
+  await mutate('save_goal',goal(savings.id,{allocated_cents:5000}));
+  await denied(()=>mutate('save_goal',goal(savings.id,{allocated_cents:1})));
+  const future=account({kind:'savings',opening_date:'2100-01-01',opening_balance_cents:100000}); await mutate('save_account',future);
+  await mutate('save_goal',goal(future.id,{start_date:'2100-01-01',allocated_cents:0}));
+  await denied(()=>mutate('save_goal',goal(future.id,{allocated_cents:1})));
+});
+
+test('account archiving preserves existing relationships and active goals protect the savings account kind', async () => {
+  const savings=account({kind:'savings'}),other=account({kind:'savings'}),checking=account(); for(const a of [savings,other,checking]) await mutate('save_account',a);
+  await denied(()=>mutate('save_goal',goal(checking.id)));
+  const g=goal(savings.id,{allocated_cents:50000}); await mutate('save_goal',g);
+  await denied(()=>mutate('save_account',{...savings,kind:'checking'}));
+  const e=entry({account_id:savings.id,payment_method:'bank_transfer'}); await mutate('save_entry',e);
+  await mutate('account_status',{id:savings.id,archived:true});
+  await mutate('save_goal',{...g,allocated_cents:40000,notes:'Preserve archived original account'});
+  await mutate('save_entry',e); await mutate('record_payment',{id:randomUUID(),entry_id:e.id,amount_cents:1000,paid_on:'2026-01-15'});
+  await denied(()=>mutate('save_entry',entry({account_id:savings.id})));
+  await denied(()=>mutate('save_goal',goal(savings.id)));
+  await mutate('goal_status',{id:g.id,archived:true}); await mutate('save_account',{...savings,kind:'checking'});
+  await denied(()=>mutate('goal_status',{id:g.id,archived:false}));
+  await mutate('save_goal',{...g,account_id:other.id,allocated_cents:40000}); await mutate('goal_status',{id:g.id,archived:false});
+  const s=await snapshot(); assert.ok(s.accounts.find(x=>x.id===savings.id).archived_at); assert.equal(s.goals.find(x=>x.id===g.id).account_id,other.id);
+});
+
+test('new account, balance, transfer and goal operations enforce ownership at actions and foreign keys', async () => {
+  const owned=account({kind:'savings'}),foreign=account({kind:'savings'}); await mutate('save_account',owned); await mutate('save_account',foreign,secondOwner);
+  await denied(()=>mutate('save_account',{...foreign,name:'Hijacked'}),'P0002');
+  await denied(()=>mutate('account_status',{id:foreign.id,archived:true}),'P0002');
+  await denied(()=>actual(foreign.id),'P0002');
+  await denied(()=>mutate('save_balance_update',{account_id:foreign.id,date:'2026-01-01',balance_cents:1}),'P0002');
+  await denied(()=>mutate('save_transfer',transfer(owned.id,foreign.id)),'P0002');
+  await denied(()=>mutate('save_goal',goal(foreign.id)),'P0002');
+  await denied(()=>mutate('save_spending',{id:randomUUID(),account_id:foreign.id,date:'2026-01-01',amount_cents:1,title:'Wrong account'}),'P0002');
+  await denied(()=>mutate('clear_spending',{month:'2026-01',account_id:foreign.id}),'P0002');
+  const foreignGoal=goal(foreign.id,{allocated_cents:1000}); await mutate('save_goal',foreignGoal,secondOwner);
+  await denied(()=>mutate('save_goal',{...foreignGoal,account_id:owned.id}),'P0002'); await denied(()=>mutate('goal_status',{id:foreignGoal.id,archived:true}),'P0002');
+  const foreignUpdate=await mutate('save_balance_update',{account_id:foreign.id,date:'2026-01-20',balance_cents:2000},secondOwner);
+  await denied(()=>mutate('save_balance_update',{id:foreignUpdate.id,account_id:owned.id,date:'2026-01-20',balance_cents:1}),'P0002');
+  await mutate('remove_balance_update',{id:foreignUpdate.id}); assert.ok((await snapshot(secondOwner)).balance_updates.some(x=>x.id===foreignUpdate.id));
+  const e=entry({account_id:owned.id}); await mutate('save_entry',e);
+  await denied(()=>mutate('record_payment',{id:randomUUID(),entry_id:e.id,amount_cents:1,paid_on:'2026-01-15',account_id:foreign.id}),'P0002');
+  await denied(()=>db.query('update public.finance_entries set account_id=$1 where id=$2',[foreign.id,e.id]),'23503');
+  await denied(()=>db.query('insert into public.finance_goal_history(user_id,goal_id,allocated_cents) values($1,$2,0)',[owner,foreignGoal.id]),'23503');
+  const s=await snapshot(); assert.ok(!s.accounts.some(x=>x.id===foreign.id)); assert.ok(!s.goals.some(x=>x.id===foreignGoal.id)); assert.ok(!s.balance_updates.some(x=>x.id===foreignUpdate.id));
+});
+
+test('collection reversal restores cash to its recorded account even after the bill account changes', async () => {
+  const first=account(),second=account(); await mutate('save_account',first); await mutate('save_account',second);
+  const e=entry({account_id:first.id,payment_method:'debit_card'}); await mutate('save_entry',e);
+  const payment={id:randomUUID(),entry_id:e.id,amount_cents:4000,paid_on:'2026-01-15'}; await mutate('record_payment',payment);
+  await mutate('save_entry',{...e,account_id:second.id,payment_method:'bank_transfer'});
+  const d=await mutate('transfer_collections',{entry_id:e.id,collector:'Test collections'});
+  assert.equal(await actual(first.id),96000); assert.equal(await actual(second.id),100000);
+  await mutate('remove_payment',{id:payment.id});
+  assert.equal(await actual(first.id),100000); assert.equal(await actual(second.id),100000);
+  assert.equal((await snapshot()).debts.find(x=>x.id===d.id).current_balance_cents,10000);
+});
+
+test('account migration is repeatable with posted cash and savings history, with least-privilege grants', async () => {
+  const before=await snapshot(); await db.exec(accountsMigration); const after=await snapshot(); assert.deepEqual(after,before);
+  for(const table of ['finance_accounts','finance_transfers','finance_savings_goals','finance_goal_history']) {
+    assert.equal((await one("select has_table_privilege('service_role',$1,'DELETE,TRUNCATE,REFERENCES,TRIGGER') granted",[`public.${table}`])).granted,false,table);
+  }
+  assert.equal((await one("select has_table_privilege('service_role','public.finance_goal_history','UPDATE') granted")).granted,false);
+  assert.equal((await one("select has_table_privilege('service_role','public.finance_balance_updates','DELETE') granted")).granted,true);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
 });

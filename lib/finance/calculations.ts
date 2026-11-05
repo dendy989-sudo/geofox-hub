@@ -1,4 +1,4 @@
-import type { FinanceData, FinanceEntry, FinancePayment, FinancePlan } from "./types";
+import type { FinanceAccount, FinanceAccountScope, FinanceBalanceUpdate, FinanceData, FinanceEntry, FinancePayment, FinancePlan, FinanceTransfer } from "./types";
 
 export type FinanceEntryState = "paid" | "received" | "partial" | "past_due" | "scheduled" | "cancelled" | "collections";
 
@@ -7,12 +7,15 @@ export interface FinanceDraft {
   kind: "income" | "bill" | "spending";
   date: string;
   amount_cents: number;
+  account_id?: string | null;
 }
 
 export interface DailyLedgerOptions {
   /** Planning spending is excluded unless explicitly requested by Live Money. */
   includeSpending?: boolean;
   drafts?: FinanceDraft[];
+  /** Payments use their saved account, while unpaid plans use the entry's current account. */
+  accountScope?: FinanceAccountScope;
 }
 
 export interface FinanceLedgerDay {
@@ -20,10 +23,19 @@ export interface FinanceLedgerDay {
   income_cents: number;
   bills_cents: number;
   spending_cents: number;
+  /** Internal transfers are separate from income and bills; they net to zero across all accounts. */
+  transfer_cents: number;
+  /** Balance after this day's anchors, before this day's flows. */
+  starting_cents: number;
+  /** Difference caused by a dated balance anchor, never treated as income or spending. */
+  balance_adjustment_cents: number;
   net_cents: number;
   ending_cents: number;
   /** Entries with a payment or an outstanding scheduled amount on this day. */
   entries: FinanceEntry[];
+  balance_updates: FinanceBalanceUpdate[];
+  account_openings: FinanceAccount[];
+  transfers: FinanceTransfer[];
 }
 
 export interface FinanceMonthSummary {
@@ -43,6 +55,8 @@ export interface FinanceMonthSummary {
   /** Cash forecast: actual receipts plus outstanding income scheduled in this month. */
   income_cents: number;
   net_cents: number;
+  transfer_cents: number;
+  balance_adjustment_cents: number;
   /** Actual cash paid/received in this month, including inactive or archived entry history. */
   paid_bills_cents: number;
   received_income_cents: number;
@@ -146,7 +160,7 @@ export function parseMoney(value: string, allowNegative = false): number | null 
 }
 
 export function paidAmount(entry: FinanceEntry, payments: FinancePayment[]): number {
-  return payments.reduce((total, payment) => payment.entry_id === entry.id && !payment.reversed_at ? total + payment.amount_cents : total, 0);
+  return payments.reduce((total, payment) => payment.entry_id === entry.id && payment.user_id === entry.user_id && !payment.reversed_at ? total + payment.amount_cents : total, 0);
 }
 
 export function remainingAmount(entry: FinanceEntry, payments: FinancePayment[]): number {
@@ -168,9 +182,86 @@ export function entryState(entry: FinanceEntry, payments: FinancePayment[], toda
   return paidAmount(entry, payments) > 0 ? "partial" : "scheduled";
 }
 
-/** Each month's opening is explicit. Prior projections never overwrite a reconciled balance. */
-export function monthOpening(data: FinanceData, month: string): number {
-  return data.months.find((item) => item.month === month)?.opening_balance_cents ?? 0;
+/** Missing account fields on migrated records mean unassigned, never the entry's current account. */
+export function matchesAccountScope(accountId: string | null | undefined, scope: FinanceAccountScope = "all"): boolean {
+  return scope === "all" || (accountId ?? null) === scope;
+}
+
+function ownedAccounts(data: FinanceData): FinanceAccount[] {
+  return (data.accounts ?? []).filter((account) => account.user_id === data.user.id);
+}
+
+function accountIds(data: FinanceData, scope: FinanceAccountScope): (string | null)[] {
+  const accounts = ownedAccounts(data);
+  if (scope === "all") return [null, ...accounts.map((account) => account.id)];
+  if (scope === null) return [null];
+  return accounts.some((account) => account.id === scope) ? [scope] : [];
+}
+
+/** A correction can establish tracking before the account's original opening date. */
+export function accountTrackingStart(data: FinanceData, accountId: string): string | null {
+  const account = ownedAccounts(data).find((item) => item.id === accountId);
+  if (!account) return null;
+  return (data.balance_updates ?? []).filter((item) => item.user_id === data.user.id && item.account_id === accountId)
+    .reduce((first, item) => item.date < first ? item.date : first, account.opening_date);
+}
+
+interface BalanceAnchor { date: string; balance_cents: number }
+
+function latestAnchor(data: FinanceData, accountId: string | null, asOf: string): BalanceAnchor | null {
+  let anchor: BalanceAnchor | null;
+  if (accountId === null) {
+    // The unassigned bucket keeps the original explicit month-by-month opening workflow.
+    anchor = { date: `${asOf.slice(0, 7)}-01`, balance_cents: data.months.find((item) => item.user_id === data.user.id && item.month === asOf.slice(0, 7))?.opening_balance_cents ?? 0 };
+  } else {
+    const account = ownedAccounts(data).find((item) => item.id === accountId);
+    if (!account) return null;
+    anchor = account.opening_date <= asOf ? { date: account.opening_date, balance_cents: account.opening_balance_cents } : null;
+  }
+  const updates = (data.balance_updates ?? []).filter((item) => item.user_id === data.user.id && item.account_id === accountId && item.date <= asOf && (accountId !== null || item.date >= `${asOf.slice(0, 7)}-01`))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.updated_at.localeCompare(b.updated_at) || a.id.localeCompare(b.id));
+  for (const update of updates) {
+    if (!anchor || update.date >= anchor.date) anchor = { date: update.date, balance_cents: update.balance_cents };
+  }
+  return anchor;
+}
+
+function postedFlow(data: FinanceData, accountId: string | null, from: string, through: string, includeThrough: boolean): number {
+  const entries = new Map(data.entries.filter((entry) => entry.user_id === data.user.id).map((entry) => [entry.id, entry]));
+  const inRange = (date: string) => date >= from && (includeThrough ? date <= through : date < through);
+  let result = 0;
+  for (const payment of data.payments) {
+    if (payment.user_id !== data.user.id || payment.reversed_at || !matchesAccountScope(payment.account_id, accountId) || !inRange(payment.paid_on)) continue;
+    const entry = entries.get(payment.entry_id);
+    if (entry) result += entry.kind === "income" ? payment.amount_cents : -payment.amount_cents;
+  }
+  if (accountId !== null) {
+    const ownedIds = new Set(ownedAccounts(data).map((account) => account.id));
+    for (const transfer of data.transfers ?? []) {
+      if (transfer.user_id !== data.user.id || transfer.status !== "completed" || !inRange(transfer.date) || !ownedIds.has(transfer.from_account_id) || !ownedIds.has(transfer.to_account_id)) continue;
+      if (transfer.to_account_id === accountId) result += transfer.amount_cents;
+      if (transfer.from_account_id === accountId) result -= transfer.amount_cents;
+    }
+  }
+  return result;
+}
+
+/** Posted funds only: plans, scenarios, future anchors, and planned transfers never fund savings goals. */
+export function actualAccountBalance(data: FinanceData, accountId: string | null, asOf: string): number {
+  if (!validDay(asOf)) throw new RangeError("Choose a valid balance date in YYYY-MM-DD format.");
+  const anchor = latestAnchor(data, accountId, asOf);
+  return anchor ? anchor.balance_cents + postedFlow(data, accountId, anchor.date, asOf, true) : 0;
+}
+
+function accountMonthOpening(data: FinanceData, accountId: string | null, firstDay: string): number {
+  const anchor = latestAnchor(data, accountId, firstDay);
+  return anchor ? anchor.balance_cents + postedFlow(data, accountId, anchor.date, firstDay, false) : 0;
+}
+
+/** Account openings carry posted history; unassigned months retain an explicit saved opening. */
+export function monthOpening(data: FinanceData, month: string, accountScope: FinanceAccountScope = "all"): number {
+  if (!monthParts(month)) throw new RangeError("Choose a valid month in YYYY-MM format.");
+  return accountIds(data, accountScope).reduce<number>((sum, accountId) => sum + accountMonthOpening(data, accountId, `${month}-01`), 0);
 }
 
 function paymentsByEntry(payments: FinancePayment[]): Map<string, number> {
@@ -190,11 +281,24 @@ function scheduleOrder(a: FinanceEntry, b: FinanceEntry): number {
 }
 
 export function dailyLedger(data: FinanceData, month: string, options: DailyLedgerOptions = {}): FinanceLedgerDay[] {
-  const days: FinanceLedgerDay[] = monthDays(month).map((date) => ({ date, income_cents: 0, bills_cents: 0, spending_cents: 0, net_cents: 0, ending_cents: 0, entries: [] }));
+  const days: FinanceLedgerDay[] = monthDays(month).map((date) => ({ date, income_cents: 0, bills_cents: 0, spending_cents: 0, transfer_cents: 0, starting_cents: 0, balance_adjustment_cents: 0, net_cents: 0, ending_cents: 0, entries: [], balance_updates: [], account_openings: [], transfers: [] }));
   const byDate = new Map(days.map((day) => [day.date, day]));
-  const byId = new Map(data.entries.map((entry) => [entry.id, entry]));
-  const paid = paymentsByEntry(data.payments);
+  const scope = options.accountScope === undefined ? "all" : options.accountScope;
+  const ids = accountIds(data, scope), idSet = new Set(ids);
+  const accounts = ownedAccounts(data), ownedIds = new Set(accounts.map((account) => account.id));
+  const starts = new Map(accounts.map((account) => [account.id, accountTrackingStart(data, account.id)!]));
+  const balances = new Map(ids.map((accountId) => [accountId, accountMonthOpening(data, accountId, days[0].date)]));
+  const flows = new Map<string, Map<string | null, number>>();
+  const entries = data.entries.filter((entry) => entry.user_id === data.user.id);
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const paid = paymentsByEntry(data.payments.filter((payment) => payment.user_id === data.user.id));
   const entryIds = new Map<string, Set<string>>();
+  const tracked = (accountId: string | null, date: string) => idSet.has(accountId) && (accountId === null || date >= (starts.get(accountId) ?? "9999-12-31"));
+  const post = (day: FinanceLedgerDay, accountId: string | null, amount: number) => {
+    const bucket = flows.get(day.date) ?? new Map<string | null, number>();
+    bucket.set(accountId, (bucket.get(accountId) ?? 0) + amount);
+    flows.set(day.date, bucket);
+  };
   const attach = (day: FinanceLedgerDay, entry: FinanceEntry) => {
     const ids = entryIds.get(day.date) ?? new Set<string>();
     if (!ids.has(entry.id)) {
@@ -206,45 +310,82 @@ export function dailyLedger(data: FinanceData, month: string, options: DailyLedg
 
   // Actual cash history survives cancellation, transfer to collections, and archiving.
   for (const payment of data.payments) {
-    if (payment.reversed_at) continue;
+    const accountId = payment.account_id ?? null;
+    if (payment.user_id !== data.user.id || payment.reversed_at || !tracked(accountId, payment.paid_on)) continue;
     const day = byDate.get(payment.paid_on);
     const entry = byId.get(payment.entry_id);
     if (!day || !entry) continue;
     if (entry.kind === "income") day.income_cents += payment.amount_cents;
     else day.bills_cents += payment.amount_cents;
+    post(day, accountId, entry.kind === "income" ? payment.amount_cents : -payment.amount_cents);
     attach(day, entry);
   }
 
   // Only the unpaid remainder is forecast. Moving a bill changes this date, not its original due date.
-  for (const entry of data.entries) {
-    if (entry.status !== "active") continue;
+  for (const entry of entries) {
+    const accountId = entry.account_id ?? null;
+    if (entry.status !== "active" || !tracked(accountId, entry.scheduled_date)) continue;
     const day = byDate.get(entry.scheduled_date);
     const amount = outstanding(entry, paid);
     if (!day || amount === 0) continue;
     if (entry.kind === "income") day.income_cents += amount;
     else day.bills_cents += amount;
+    post(day, accountId, entry.kind === "income" ? amount : -amount);
     attach(day, entry);
   }
 
   if (options.includeSpending) {
     for (const spending of data.spending) {
+      const accountId = spending.account_id ?? null;
+      if (spending.user_id !== data.user.id || !tracked(accountId, spending.date)) continue;
       const day = byDate.get(spending.date);
-      if (day) day.spending_cents += spending.amount_cents;
+      if (day) { day.spending_cents += spending.amount_cents; post(day, accountId, -spending.amount_cents); }
     }
   }
   for (const draft of options.drafts ?? []) {
+    const accountId = draft.account_id ?? null;
+    if (!tracked(accountId, draft.date)) continue;
     const day = byDate.get(draft.date);
     if (!day) continue;
-    if (draft.kind === "income") day.income_cents += draft.amount_cents;
-    else if (draft.kind === "bill") day.bills_cents += draft.amount_cents;
-    else if (options.includeSpending) day.spending_cents += draft.amount_cents;
+    if (draft.kind === "income") { day.income_cents += draft.amount_cents; post(day, accountId, draft.amount_cents); }
+    else if (draft.kind === "bill") { day.bills_cents += draft.amount_cents; post(day, accountId, -draft.amount_cents); }
+    else if (options.includeSpending) { day.spending_cents += draft.amount_cents; post(day, accountId, -draft.amount_cents); }
   }
 
-  let balance = monthOpening(data, month);
+  for (const transfer of data.transfers ?? []) {
+    const day = byDate.get(transfer.date);
+    if (!day || transfer.user_id !== data.user.id || transfer.status === "cancelled" || !ownedIds.has(transfer.from_account_id) || !ownedIds.has(transfer.to_account_id)) continue;
+    let involved = false;
+    for (const [accountId, sign] of [[transfer.from_account_id, -1], [transfer.to_account_id, 1]] as const) {
+      if (!tracked(accountId, transfer.date)) continue;
+      const amount = sign * transfer.amount_cents;
+      day.transfer_cents += amount; post(day, accountId, amount); involved = true;
+    }
+    if (involved) day.transfers.push(transfer);
+  }
+
+  for (const account of accounts) {
+    const day = byDate.get(account.opening_date);
+    if (day && idSet.has(account.id)) day.account_openings.push(account);
+  }
+  for (const update of (data.balance_updates ?? []).filter((item) => item.user_id === data.user.id && idSet.has(item.account_id)).sort((a, b) => a.date.localeCompare(b.date) || a.updated_at.localeCompare(b.updated_at) || a.id.localeCompare(b.id))) {
+    byDate.get(update.date)?.balance_updates.push(update);
+  }
+
   for (const day of days) {
-    day.net_cents = day.income_cents - day.bills_cents - day.spending_cents;
-    balance += day.net_cents;
-    day.ending_cents = balance;
+    const reset = (accountId: string | null, amount: number) => {
+      day.balance_adjustment_cents += amount - (balances.get(accountId) ?? 0);
+      balances.set(accountId, amount);
+    };
+    // The first day's opening already includes its latest anchor; markers remain visible.
+    if (day.date !== days[0].date) {
+      for (const account of day.account_openings) reset(account.id, account.opening_balance_cents);
+      for (const update of day.balance_updates) reset(update.account_id, update.balance_cents);
+    }
+    day.starting_cents = [...balances.values()].reduce((sum, amount) => sum + amount, 0);
+    day.net_cents = day.income_cents - day.bills_cents - day.spending_cents + day.transfer_cents;
+    for (const [accountId, amount] of flows.get(day.date) ?? []) balances.set(accountId, (balances.get(accountId) ?? 0) + amount);
+    day.ending_cents = [...balances.values()].reduce((sum, amount) => sum + amount, 0);
     day.entries.sort(scheduleOrder);
   }
   return days;
@@ -262,17 +403,20 @@ function addCalendarDays(date: string, amount: number): string {
   return result;
 }
 
-export function monthSummary(data: FinanceData, month: string, today: string): FinanceMonthSummary {
-  const ledger = dailyLedger(data, month);
+export function monthSummary(data: FinanceData, month: string, today: string, accountScope: FinanceAccountScope = "all"): FinanceMonthSummary {
+  const ledger = dailyLedger(data, month, { accountScope });
   const firstDay = ledger[0].date;
-  const paid = paymentsByEntry(data.payments);
-  const byId = new Map(data.entries.map((entry) => [entry.id, entry]));
+  const payments = data.payments.filter((payment) => payment.user_id === data.user.id);
+  const entries = data.entries.filter((entry) => entry.user_id === data.user.id);
+  const paid = paymentsByEntry(payments);
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const planById = new Map(data.plans.filter((plan) => plan.user_id === data.user.id).map((plan) => [plan.id, plan]));
   const upcomingEnd = addCalendarDays(today, 6);
   const summary: FinanceMonthSummary = {
-    opening_cents: monthOpening(data, month), original_bills_cents: 0, original_payable_cents: 0,
+    opening_cents: monthOpening(data, month, accountScope), original_bills_cents: 0, original_payable_cents: 0,
     original_paid_cents: 0, original_remaining_cents: 0, original_cancelled_cents: 0,
     original_collections_cents: 0, original_progress_percent: 0,
-    scheduled_bills_cents: 0, income_cents: 0, net_cents: 0, paid_bills_cents: 0,
+    scheduled_bills_cents: 0, income_cents: 0, net_cents: 0, transfer_cents: 0, balance_adjustment_cents: 0, paid_bills_cents: 0,
     received_income_cents: 0, scheduled_remaining_cents: 0, expected_income_cents: 0,
     ending_cents: ledger[ledger.length - 1].ending_cents,
     lowest_cents: ledger[0].ending_cents, lowest_date: firstDay,
@@ -285,19 +429,22 @@ export function monthSummary(data: FinanceData, month: string, today: string): F
     summary.scheduled_bills_cents += day.bills_cents;
     summary.income_cents += day.income_cents;
     summary.net_cents += day.net_cents;
+    summary.transfer_cents += day.transfer_cents;
+    summary.balance_adjustment_cents += day.balance_adjustment_cents;
     if (day.ending_cents < summary.lowest_cents) {
       summary.lowest_cents = day.ending_cents;
       summary.lowest_date = day.date;
     }
   }
-  for (const payment of data.payments) {
-    if (payment.reversed_at || !dayInMonth(payment.paid_on, month)) continue;
+  for (const payment of payments) {
+    if (payment.reversed_at || !dayInMonth(payment.paid_on, month) || !matchesAccountScope(payment.account_id, accountScope)) continue;
     const entry = byId.get(payment.entry_id);
     if (entry?.kind === "bill") summary.paid_bills_cents += payment.amount_cents;
     else if (entry?.kind === "income") summary.received_income_cents += payment.amount_cents;
   }
 
-  for (const entry of data.entries) {
+  for (const entry of entries) {
+    if (!matchesAccountScope(entry.account_id, accountScope)) continue;
     const originalMonth = dayInMonth(entry.original_due_date, month);
     const scheduledMonth = dayInMonth(entry.scheduled_date, month);
     const remaining = outstanding(entry, paid);
@@ -323,7 +470,7 @@ export function monthSummary(data: FinanceData, month: string, today: string): F
       }
       if (scheduledMonth && !originalMonth) summary.moved_in_cents += remaining;
       if (originalMonth && !scheduledMonth) summary.moved_out_cents += remaining;
-      if (!entry.plan_id && entry.expense_type !== "bill") summary.installments_remaining_cents += remaining;
+      if (entry.expense_type !== "bill" && (!entry.plan_id || planById.get(entry.plan_id)?.status === "active")) summary.installments_remaining_cents += remaining;
     }
     if (entry.scheduled_date >= today) {
       if (entry.kind === "bill") {
@@ -334,9 +481,6 @@ export function monthSummary(data: FinanceData, month: string, today: string): F
         if (entry.scheduled_date <= upcomingEnd) summary.upcoming_income_cents += remaining;
       }
     }
-  }
-  for (const plan of data.plans) {
-    if (plan.status === "active") summary.installments_remaining_cents += planProgress(plan, data).active_remaining_cents;
   }
   summary.original_progress_percent = summary.original_payable_cents > 0 ? Math.min(100, summary.original_paid_cents / summary.original_payable_cents * 100) : 0;
   return summary;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   dailyLedger, dayInMonth, debtSummary, entryState, isMoved, isPastDue, monthDays,
-  monthOpening, monthSummary, paidAmount, parseMoney, planProgress, remainingAmount, shiftMonth,
+  accountTrackingStart, actualAccountBalance, matchesAccountScope, monthOpening, monthSummary, paidAmount, parseMoney, planProgress, remainingAmount, shiftMonth,
 } from "../lib/finance/calculations.ts";
 
 const timestamp = "2026-11-01T12:00:00Z";
@@ -56,6 +56,18 @@ function on(ledger, date) {
   const day = ledger.find((item) => item.date === date);
   assert.ok(day, `Expected ledger date ${date}`);
   return day;
+}
+
+function account(id, overrides = {}) {
+  return { id, user_id: "owner", name: id, institution: "Bank", kind: "checking", last_four: null, opening_date: "2026-11-01", opening_balance_cents: 100000, credit_limit_cents: null, notes: "", archived_at: null, created_at: timestamp, updated_at: timestamp, ...overrides };
+}
+
+function balanceUpdate(id, accountId, date, amount, overrides = {}) {
+  return { id, user_id: "owner", account_id: accountId, date, balance_cents: amount, notes: "", created_at: timestamp, updated_at: timestamp, ...overrides };
+}
+
+function transfer(id, from, to, amount, date, overrides = {}) {
+  return { id, user_id: "owner", from_account_id: from, to_account_id: to, amount_cents: amount, date, status: "completed", notes: "", created_at: timestamp, updated_at: timestamp, ...overrides };
 }
 
 test("money parsing uses exact cents, accepts explicit negative openings, and rejects ambiguous input", () => {
@@ -489,4 +501,247 @@ test("lowest daily closing balance records the first low point and keeps income 
   assert.equal(summary.lowest_date, "2026-11-05");
   assert.equal(summary.net_cents, 8000);
   assert.equal(summary.ending_cents, 18000);
+});
+
+test("account scopes preserve migrated unassigned snapshots without falling back to a reassigned entry", () => {
+  assert.equal(matchesAccountScope(undefined, null), true);
+  assert.equal(matchesAccountScope(null, "all"), true);
+  assert.equal(matchesAccountScope("checking", null), false);
+  const fixture = data({
+    accounts: [account("checking")],
+    entries: [entry("paid", { account_id: "checking" })],
+    payments: [payment("legacy", "paid", 10000, "2026-11-02")],
+  });
+  assert.equal(on(dailyLedger(fixture, "2026-11", { accountScope: null }), "2026-11-02").bills_cents, 10000);
+  assert.equal(dailyLedger(fixture, "2026-11", { accountScope: "checking" }).at(-1).ending_cents, 100000);
+  assert.equal(monthSummary(fixture, "2026-11", fixture.today, null).paid_bills_cents, 10000);
+  assert.equal(actualAccountBalance(fixture, "checking", fixture.today), 100000);
+});
+
+test("payment account snapshots and remaining assigned bills are scoped independently", () => {
+  const fixture = data({
+    accounts: [account("first"), account("second", { opening_balance_cents: 40000 })],
+    entries: [entry("bill", { account_id: "second" })],
+    payments: [payment("partial", "bill", 4000, "2026-11-03", { account_id: "first" })],
+  });
+  const first = dailyLedger(fixture, "2026-11", { accountScope: "first" });
+  const second = dailyLedger(fixture, "2026-11", { accountScope: "second" });
+  assert.equal(on(first, "2026-11-03").bills_cents, 4000);
+  assert.equal(on(first, "2026-11-10").bills_cents, 0);
+  assert.equal(on(second, "2026-11-03").bills_cents, 0);
+  assert.equal(on(second, "2026-11-10").bills_cents, 6000);
+  assert.equal(monthSummary(fixture, "2026-11", fixture.today, "first").paid_bills_cents, 4000);
+  const reassigned = monthSummary(fixture, "2026-11", fixture.today, "second");
+  assert.equal(reassigned.paid_bills_cents, 0);
+  assert.equal(reassigned.original_paid_cents, 4000);
+  assert.equal(reassigned.original_remaining_cents, 6000);
+  assert.equal(reassigned.past_due_cents, 6000);
+  assert.equal(first.at(-1).ending_cents + second.at(-1).ending_cents, dailyLedger(fixture, "2026-11").at(-1).ending_cents);
+});
+
+test("named account month openings roll only posted history and completed transfers from the last anchor", () => {
+  const fixture = data({
+    accounts: [account("checking", { opening_date: "2026-10-20" }), account("savings", { opening_date: "2026-10-20", opening_balance_cents: 0 })],
+    entries: [
+      entry("old-bill", { account_id: "checking", amount_cents: 20000, status: "cancelled", original_due_date: "2026-10-25" }),
+      entry("old-income", { kind: "income", account_id: "checking", amount_cents: 30000, original_due_date: "2026-10-20" }),
+      entry("unreceived", { kind: "income", account_id: "checking", amount_cents: 50000, original_due_date: "2026-10-30" }),
+      entry("november", { account_id: "checking", amount_cents: 1000, original_due_date: "2026-11-01" }),
+    ],
+    payments: [
+      payment("bill", "old-bill", 20000, "2026-10-25", { account_id: "checking" }),
+      payment("income", "old-income", 30000, "2026-10-20", { account_id: "checking" }),
+      payment("reversed", "old-bill", 9000, "2026-10-25", { account_id: "checking", reversed_at: timestamp }),
+      payment("first-day", "november", 1000, "2026-11-01", { account_id: "checking" }),
+    ],
+    transfers: [transfer("completed", "checking", "savings", 7000, "2026-10-29"), transfer("planned", "checking", "savings", 11000, "2026-10-30", { status: "planned" })],
+  });
+  assert.equal(monthOpening(fixture, "2026-11", "checking"), 103000);
+  assert.equal(on(dailyLedger(fixture, "2026-11", { accountScope: "checking" }), "2026-11-01").ending_cents, 102000);
+  assert.equal(actualAccountBalance(fixture, "checking", "2026-11-01"), 102000);
+  const corrected = { ...fixture, balance_updates: [balanceUpdate("anchor", "checking", "2026-10-27", 90000)] };
+  assert.equal(monthOpening(corrected, "2026-11", "checking"), 83000);
+});
+
+test("a dated balance replaces only that day's start and preserves all earlier daily results", () => {
+  const fixture = data({
+    accounts: [account("checking")],
+    entries: [entry("income", { kind: "income", account_id: "checking", amount_cents: 20000, original_due_date: "2026-11-03" }), entry("bill", { account_id: "checking", original_due_date: "2026-11-05" })],
+    payments: [payment("received", "income", 20000, "2026-11-03", { account_id: "checking" }), payment("paid", "bill", 10000, "2026-11-05", { account_id: "checking" })],
+  });
+  const reset = balanceUpdate("reset", "checking", "2026-11-05", 50000);
+  const corrected = { ...fixture, balance_updates: [reset, balanceUpdate("future", "checking", "2026-11-20", 200000)] };
+  const before = dailyLedger(fixture, "2026-11", { accountScope: "checking" });
+  const after = dailyLedger(corrected, "2026-11", { accountScope: "checking" });
+  assert.deepEqual(after.slice(0, 4), before.slice(0, 4));
+  const day = on(after, "2026-11-05");
+  assert.equal(day.starting_cents, 50000);
+  assert.equal(day.balance_adjustment_cents, -70000);
+  assert.equal(day.bills_cents, 10000);
+  assert.equal(day.ending_cents, 40000);
+  assert.deepEqual(day.balance_updates, [reset]);
+  assert.equal(on(after, "2026-11-19").ending_cents, 40000);
+  assert.equal(actualAccountBalance(corrected, "checking", "2026-11-04"), 120000);
+  assert.equal(actualAccountBalance(corrected, "checking", "2026-11-05"), 40000);
+  assert.equal(actualAccountBalance(corrected, "checking", "2026-11-19"), 40000);
+});
+
+test("combined balances sum independent buckets after corrections and internal transfers", () => {
+  const fixture = data({
+    accounts: [account("checking"), account("savings", { opening_balance_cents: 50000 }), account("card", { kind: "credit_card", opening_balance_cents: -30000 })],
+    months: [month("2026-11", 20000)],
+    balance_updates: [balanceUpdate("checking-reset", "checking", "2026-11-05", 60000)],
+    entries: [entry("savings-bill", { account_id: "savings" }), entry("unassigned", { amount_cents: 2000, original_due_date: "2026-11-11" })],
+    transfers: [transfer("card-payment", "checking", "card", 10000, "2026-11-07")],
+  });
+  const all = dailyLedger(fixture, "2026-11");
+  const ledgers = [null, "checking", "savings", "card"].map(accountScope => dailyLedger(fixture, "2026-11", { accountScope }));
+  for (let index = 0; index < all.length; index++) {
+    assert.equal(all[index].ending_cents, ledgers.reduce((sum, ledger) => sum + ledger[index].ending_cents, 0), all[index].date);
+    assert.equal(all[index].starting_cents, ledgers.reduce((sum, ledger) => sum + ledger[index].starting_cents, 0));
+  }
+  assert.equal(on(all, "2026-11-05").starting_cents, 100000);
+  assert.equal(on(all, "2026-11-07").transfer_cents, 0);
+  assert.equal(on(all, "2026-11-07").transfers.length, 1);
+  assert.equal(on(ledgers[1], "2026-11-07").transfer_cents, -10000);
+  assert.equal(on(ledgers[3], "2026-11-07").transfer_cents, 10000);
+  assert.equal(actualAccountBalance(fixture, "card", "2026-11-07"), -20000);
+  const summary = monthSummary(fixture, "2026-11", fixture.today);
+  assert.equal(summary.ending_cents, summary.opening_cents + summary.net_cents + summary.balance_adjustment_cents);
+  assert.equal(summary.transfer_cents, 0);
+});
+
+test("unassigned balance updates retain explicit monthly openings and same-day correction precedence", () => {
+  const fixture = data({
+    months: [month("2026-10", 90000), month("2026-11", 10000)],
+    balance_updates: [balanceUpdate("october", null, "2026-10-25", 80000), balanceUpdate("first", null, "2026-11-01", 12000), balanceUpdate("midmonth", null, "2026-11-11", 30000)],
+  });
+  assert.equal(monthOpening(fixture, "2026-11", null), 12000);
+  assert.equal(monthOpening(fixture, "2026-12", null), 0);
+  const ledger = dailyLedger(fixture, "2026-11", { accountScope: null });
+  assert.equal(ledger[0].balance_adjustment_cents, 0);
+  assert.equal(ledger[0].balance_updates.length, 1);
+  assert.equal(on(ledger, "2026-11-11").balance_adjustment_cents, 18000);
+  assert.equal(actualAccountBalance(fixture, null, "2026-11-10"), 12000);
+  assert.equal(actualAccountBalance(fixture, null, "2026-12-01"), 0);
+});
+
+test("future openings and updates affect forecasts but never today's actual savings funds", () => {
+  const fixture = data({
+    accounts: [account("future", { kind: "savings", opening_date: "2026-11-20", opening_balance_cents: 50000 })],
+    balance_updates: [balanceUpdate("later", "future", "2026-11-25", 70000)],
+    entries: [entry("expected", { account_id: "future", kind: "income", amount_cents: 30000, original_due_date: "2026-11-27" })],
+  });
+  assert.equal(actualAccountBalance(fixture, "future", "2026-11-15"), 0);
+  assert.equal(actualAccountBalance(fixture, "future", "2026-11-24"), 50000);
+  assert.equal(actualAccountBalance(fixture, "future", "2026-11-30"), 70000);
+  const ledger = dailyLedger(fixture, "2026-11", { accountScope: "future" });
+  assert.equal(on(ledger, "2026-11-19").ending_cents, 0);
+  assert.equal(on(ledger, "2026-11-20").account_openings.length, 1);
+  assert.equal(on(ledger, "2026-11-20").balance_adjustment_cents, 50000);
+  assert.equal(ledger.at(-1).ending_cents, 100000);
+});
+
+test("earlier corrections establish tracking before a future opening, and later openings remain explicit anchors", () => {
+  const fixture = data({
+    accounts: [account("savings", { opening_date: "2026-12-01", opening_balance_cents: 80000 })],
+    balance_updates: [balanceUpdate("earlier", "savings", "2026-11-10", 20000)],
+    entries: [entry("received", { kind: "income", account_id: "savings", amount_cents: 10000, original_due_date: "2026-11-11" })],
+    payments: [payment("receipt", "received", 10000, "2026-11-11", { account_id: "savings" })],
+  });
+  assert.equal(accountTrackingStart(fixture, "savings"), "2026-11-10");
+  assert.equal(actualAccountBalance(fixture, "savings", "2026-11-09"), 0);
+  assert.equal(actualAccountBalance(fixture, "savings", "2026-11-15"), 30000);
+  assert.equal(monthOpening(fixture, "2026-12", "savings"), 80000);
+  assert.equal(actualAccountBalance(fixture, "savings", "2026-12-01"), 80000);
+});
+
+test("payments before tracking remain actual history without inventing earlier account balances", () => {
+  const fixture = data({
+    accounts: [account("later", { opening_date: "2026-11-20", opening_balance_cents: 50000 })],
+    entries: [entry("historic", { kind: "income", account_id: "later", amount_cents: 30000, original_due_date: "2026-11-03" })],
+    payments: [payment("historic-receipt", "historic", 30000, "2026-11-03", { account_id: "later" })],
+  });
+  assert.equal(actualAccountBalance(fixture, "later", "2026-11-10"), 0);
+  assert.equal(on(dailyLedger(fixture, "2026-11", { accountScope: "later" }), "2026-11-03").ending_cents, 0);
+  const summary = monthSummary(fixture, "2026-11", fixture.today, "later");
+  assert.equal(summary.received_income_cents, 30000);
+  assert.equal(summary.income_cents, 0);
+  assert.equal(summary.ending_cents, 50000);
+});
+
+test("planned transfers affect the forecast while completed transfers alone affect actual funds", () => {
+  const fixture = data({
+    accounts: [account("checking"), account("savings", { kind: "savings", opening_balance_cents: 0 })],
+    transfers: [transfer("planned", "checking", "savings", 20000, "2026-11-05", { status: "planned" }), transfer("completed", "checking", "savings", 5000, "2026-11-03"), transfer("cancelled", "checking", "savings", 30000, "2026-11-04", { status: "cancelled" })],
+  });
+  assert.equal(actualAccountBalance(fixture, "savings", fixture.today), 5000);
+  assert.equal(dailyLedger(fixture, "2026-11", { accountScope: "savings" }).at(-1).ending_cents, 25000);
+  assert.equal(dailyLedger(fixture, "2026-11", { accountScope: "checking" }).at(-1).ending_cents, 75000);
+  assert.equal(dailyLedger(fixture, "2026-11").at(-1).ending_cents, 100000);
+  assert.equal(monthSummary(fixture, "2026-11", fixture.today, "savings").transfer_cents, 25000);
+  assert.equal(monthSummary(fixture, "2026-11", fixture.today, "savings").income_cents, 0);
+});
+
+test("account-scoped scenarios remain isolated and a later balance reset absorbs earlier scenario changes", () => {
+  const fixture = data({
+    accounts: [account("first"), account("second")],
+    balance_updates: [balanceUpdate("reset", "first", "2026-11-20", 80000)],
+    spending: [{ id: "one", user_id: "owner", date: "2026-11-05", amount_cents: 20000, account_id: "first", title: "Spending", created_at: timestamp }],
+  });
+  const drafts = [{ id: "other", kind: "bill", date: "2026-11-07", amount_cents: 5000, account_id: "second" }, { id: "later", kind: "income", date: "2026-11-21", amount_cents: 10000, account_id: "first" }];
+  const initial = structuredClone(fixture);
+  const first = dailyLedger(fixture, "2026-11", { accountScope: "first", includeSpending: true, drafts });
+  assert.equal(on(first, "2026-11-05").ending_cents, 80000);
+  assert.equal(on(first, "2026-11-07").bills_cents, 0);
+  assert.equal(on(first, "2026-11-20").ending_cents, 80000);
+  assert.equal(first.at(-1).ending_cents, 90000);
+  assert.equal(dailyLedger(fixture, "2026-11", { accountScope: "first" }).at(-1).ending_cents, 80000);
+  assert.equal(actualAccountBalance(fixture, "first", "2026-11-15"), 100000);
+  assert.deepEqual(fixture, initial);
+});
+
+test("account archive preserves balances while foreign-owned and orphaned history cannot affect them", () => {
+  const fixture = data({
+    accounts: [account("archived", { archived_at: timestamp }), account("foreign", { user_id: "stranger", opening_balance_cents: 999999 })],
+    entries: [entry("owned", { account_id: "archived" }), entry("foreign-entry", { user_id: "stranger", account_id: "archived" })],
+    payments: [payment("foreign-payment", "owned", 9000, "2026-11-03", { user_id: "stranger", account_id: "archived" }), payment("orphan", "missing", 7000, "2026-11-03", { account_id: "archived" }), payment("cross-entry", "foreign-entry", 8000, "2026-11-03", { account_id: "archived" })],
+    balance_updates: [balanceUpdate("foreign-update", "archived", "2026-11-01", 999999, { user_id: "stranger" })],
+    transfers: [transfer("cross-owner", "archived", "foreign", 5000, "2026-11-02")],
+  });
+  assert.equal(actualAccountBalance(fixture, "archived", fixture.today), 100000);
+  assert.equal(actualAccountBalance(fixture, "foreign", fixture.today), 0);
+  assert.equal(monthOpening(fixture, "2026-11"), 100000);
+  assert.equal(monthSummary(fixture, "2026-11", fixture.today).original_remaining_cents, 10000);
+  assert.equal(dailyLedger(fixture, "2026-11").at(-1).ending_cents, 90000);
+});
+
+test("account installment totals follow child assignment without duplicating a whole plan", () => {
+  const fixture = data({
+    accounts: [account("first"), account("second")],
+    plans: [plan("agreement", { opening_paid_cents: 0, account_id: "first" })],
+    entries: [entry("a", { plan_id: "agreement", expense_type: "installment", account_id: "first" }), entry("b", { plan_id: "agreement", expense_type: "installment", account_id: "second" }), entry("standalone", { expense_type: "payment_plan", account_id: "second", amount_cents: 3000 })],
+    payments: [payment("paid-elsewhere", "b", 4000, "2026-11-02", { account_id: "first" })],
+  });
+  assert.equal(monthSummary(fixture, "2026-11", fixture.today, "first").installments_remaining_cents, 10000);
+  assert.equal(monthSummary(fixture, "2026-11", fixture.today, "second").installments_remaining_cents, 9000);
+  assert.equal(monthSummary(fixture, "2026-11", fixture.today).installments_remaining_cents, 19000);
+});
+
+test("account anchors use date-only boundaries across leap days, year ends, and local timezones", () => {
+  const previousZone = process.env.TZ;
+  const fixture = data({ accounts: [account("savings", { opening_date: "2027-12-31", opening_balance_cents: 10000 })], balance_updates: [balanceUpdate("leap", "savings", "2028-02-29", 12345)] });
+  try {
+    for (const zone of ["UTC", "America/Los_Angeles", "Pacific/Kiritimati"]) {
+      process.env.TZ = zone;
+      assert.equal(actualAccountBalance(fixture, "savings", "2027-12-30"), 0);
+      assert.equal(monthOpening(fixture, "2028-01", "savings"), 10000);
+      assert.equal(actualAccountBalance(fixture, "savings", "2028-02-29"), 12345);
+      assert.equal(monthOpening(fixture, "2028-03", "savings"), 12345);
+    }
+    assert.throws(() => actualAccountBalance(fixture, "savings", "2027-02-29"), RangeError);
+  } finally {
+    if (previousZone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousZone;
+  }
 });

@@ -15,39 +15,52 @@ Apply the finance migrations after the existing Hub migrations, in this order:
 1. [20261105164728_private_finance_dashboard.sql](../supabase/migrations/20261105164728_private_finance_dashboard.sql) creates the finance schema. Its allowlist bootstrap selects the already verified, active owner `janna@geofoxapps.com`; it does not create an Auth account, grant a Hub role, or admit every owner automatically.
 2. [20261105170745_finance_access_service_readonly.sql](../supabase/migrations/20261105170745_finance_access_service_readonly.sql) removes inherited Supabase default privileges and grants `service_role` only `SELECT` on `finance_access`. Allowlist changes are administered through database migrations, not app writes.
 3. [20261105175613_finance_custom_dates_vendors.sql](../supabase/migrations/20261105175613_finance_custom_dates_vendors.sql) adds custom repeating schedules, reusable vendors, optional vendor links on entries/series/plans, and the corresponding private API operations.
+4. [20261105184742_finance_accounts_balances_goals.sql](../supabase/migrations/20261105184742_finance_accounts_balances_goals.sql) adds bank/card accounts, dated balance updates, transfers, savings goals/history, account attribution, payment methods, and bill-reminder settings. Existing records and payments remain Unassigned; methods default to Manual. Existing bills receive a three-day reminder unless subsequently changed.
 
 Both `/finance` and `/api/finance` enforce owner access. Requests use the server-verified user ID, and database functions recheck the allowlist and ownership. All finance tables enable RLS and deny direct access to `anon` and `authenticated`; only the server role can use the finance functions. The browser cannot update `finance_access`. The page also requests no search indexing. Public availability will require an intentional access-model change, not just a navigation link.
 
 ### Database inventory
 
-All eleven app tables are in `public` with the `finance_` prefix:
+All sixteen app tables are in `public` with the `finance_` prefix. The migrations also define twelve `finance_*` functions, including internal validation/calculation helpers; direct client roles cannot call these functions:
 
 | Table | Purpose |
 | --- | --- |
 | `finance_access` | Explicit owner allowlist |
 | `finance_vendors` | Reusable company names, payment websites, notes, and archive status |
-| `finance_months` | Saved opening balance for each owner/month |
+| `finance_months` | Explicit saved opening balance for the Unassigned bucket in each owner/month |
+| `finance_accounts` | Checking, savings, cash, and credit-card accounts; signed openings, optional last four digits, and archive status |
+| `finance_balance_updates` | Start-of-day balance corrections for an account or Unassigned bucket on a date |
+| `finance_transfers` | Planned, completed, or cancelled transfers between two tracked accounts |
+| `finance_savings_goals` | Targets, earmarked allocations, dates, and persistent milestones for savings accounts |
+| `finance_goal_history` | Savings allocation changes, notes, and archive/restore history |
 | `finance_series` | Repeating bill and income definitions |
 | `finance_plans` | Finite installment and payment-plan agreements |
 | `finance_entries` | Individual bills, income, and generated occurrences/installments |
-| `finance_payments` | Actual payment/receipt ledger, including reversed records |
+| `finance_payments` | Actual payment/receipt ledger, immutable account/method snapshots, and retained reversed records |
 | `finance_debts` | Credit-report and collection accounts, balances, offers, and source links |
 | `finance_debt_history` | Debt changes and transfer/reversal history |
-| `finance_spending` | Saved Live Money planning spending |
+| `finance_spending` | Saved Live Money planning spending, scoped to an account or Unassigned |
 | `finance_entry_history` | Database audit of entry edits, moves, and status changes |
 
 ## Daily workflows
 
-Choose a month in the header. Start by setting its **Starting balance** to the money available before the first day's transactions. An unset month starts at zero. **Continue from last month → Use this amount** copies the previous month's saved forecast ending balance, excluding Live Money scenarios; review it and save explicitly. Later edits to the previous month do not silently change an already saved opening balance.
+Choose a month in the header and, on finance-ledger pages, choose **All accounts**, **Unassigned**, or a named account. Existing records stay Unassigned until deliberately assigned. All accounts combines named accounts, signed credit-card balances, and Unassigned money; it is a combined tracked balance, not a measure of cash alone.
+
+Add accounts in **Banks & cards** with a balance at the start of their opening date. Named accounts carry recorded transactions across months automatically. They do not carry an earlier month's unpaid forecast as if that money had actually moved. Unassigned preserves the original workflow: set **Starting balance** separately for each month; an unset Unassigned month starts at zero.
+
+**Continue from last month → Use this amount** copies the selected account's previous saved forecast ending balance, excluding Live Money scenarios, into the form. Review it and save explicitly. For a named account this creates a dated balance update; for Unassigned it saves the month's opening, or updates an existing first-day balance correction. Later changes to a prior projection do not silently change that saved amount. Avoid counting the same opening money in both Unassigned and a newly added account.
 
 | Page | Use it for |
 | --- | --- |
-| Overview | Original monthly commitments, projected balances, overdue bills, upcoming bills/income, installment balances, and collections |
+| Overview | Original monthly commitments, account-scoped balances, overdue/upcoming bills and income, installments, savings, and collections |
 | Live Money | A row for every day, daily income/bills/spending, and running ending balances; try changes and manage saved entries by date |
-| Calendar | Bordered monthly schedule with income, bills, net, and ending balances; open a day to add, edit, move, or record an entry |
-| Bills | Category totals, original-month versus planned-date views, monthly paid progress, and overdue/moved/paid/cancelled/collection/archive filters |
-| Income | Expected income, recorded receipts, overdue income, and recurring-income controls |
+| Calendar | Monthly grid or daily list with income, bills, transfers, and ending balances; open a day to manage entries, transfers, or its starting balance |
+| Bills | Category totals, original/planned month views, monthly paid progress, payment-method filters, and overdue/moved/paid/cancelled/collection/archive status filters |
+| Income | Expected income, recorded receipts, income-method filters, overdue income, and recurring-income controls |
 | Payments | Finite payment plans, installment progress and schedules, and individual bills classified as installments or payment-plan payments |
+| Banks & cards | Account records, actual balances, month-end forecasts, dated balance history, archive controls, and account transfers |
+| Savings | Savings-account balances, goal allocations and targets, earned milestones, allocation history, and archive/restore controls |
+| Reminders | Upcoming and overdue planned bill dates, snooze controls, optional device alerts, and calendar reminder downloads |
 | Vendors | Reusable companies, payment websites, linked bills/income, and manually recorded payment/receipt history |
 | Credit & collections | Original/current creditors, current debt balances, offers, status, dates, notes, and change history |
 | Reports | Saved cash-flow outlook, recorded receipts/payments, original commitments by category, plan progress, and exports |
@@ -58,13 +71,48 @@ An entry retains its original due date and original amount after creation. **Mov
 
 Record a payment or receipt after it happens, using its actual date. Partial amounts are supported; future dates and overpayments are rejected. A fully paid bill triggers confetti. Reverse an incorrect payment from the entry's history; the original payment record is retained as reversed.
 
-The saved daily forecast combines actual receipts/payments on their recorded dates with only the unpaid remainder on each active entry's planned date. It therefore does not subtract a fully paid bill again on its old scheduled date. Calendar and reports use this same saved forecast. Actual payment history remains counted after cancellation, archiving, or transfer.
+The saved daily forecast combines actual receipts/payments on their recorded dates with only the unpaid remainder on each active entry's planned date, account transfers, and dated balance resets. It therefore does not subtract a fully paid bill again on its old scheduled date. Calendar and reports use this same saved forecast. Actual payment history remains counted after cancellation, archiving, or transfer.
+
+### Accounts, methods, and transaction history
+
+In the bill/income editor, select a saved bank/card account or leave it Unassigned. Store only an account nickname, institution, and optional last four digits; a debit card belongs to its checking account. The method describes the expected transaction:
+
+| Record | Available methods |
+| --- | --- |
+| Bill or installment | Manual, Autopay, Bank transfer, Debit card, Credit card, Cash, Check, Other |
+| Income | Manual, Direct deposit, Bank transfer, Cash, Check, Card refund, Other |
+
+Autopay and Direct deposit are descriptive labels. Finance does not initiate, synchronize, or automatically mark either transaction complete. When recording a payment/receipt, confirm the actual account and method, overriding the entry defaults if needed. The saved payment keeps its own immutable account/method snapshot. Later edits to the bill, recurring occurrence, or plan do not move historical payments between accounts. To correct a recorded payment, reverse it and enter the correct transaction.
+
+Lists and unpaid forecasts follow each entry's assigned account. Actual receipt/payment totals follow transaction snapshots. Remaining debt and paid progress always consider every payment for the entry, including payments from other accounts. A plan card keeps its whole-agreement progress visible and labels its account-filtered monthly cash total and schedule. Choosing a payment/income method filters the records shown without redefining the account-wide summary metrics.
+
+Changing an occurrence's account, method, or reminder affects only that occurrence. Changing a parent plan's corresponding default updates **active unpaid installments, including archived ones**. Paid, cancelled, and collection installments keep their prior defaults; unchanged parent fields preserve individual overrides. Account archiving prevents new assignments while retaining existing associations, forecasts, balances, and history. Archived accounts remain in All accounts totals.
+
+Credit-card balances are signed: an amount owed is negative, while a positive balance is a credit. A bill paid on a tracked credit card reduces that card's balance. Moving money from checking to pay that card is an account transfer, so it does not count the same bill a second time. Credit limits are informational; they do not create spendable cash or fund savings goals.
+
+### Dated balances and transfers
+
+Use **Set balance** on a Live Money row, **Set starting balance** on a calendar day, or **Update balance** in Banks & cards. Choose the specific account and enter its balance **at the start of that day, before its listed transactions**. The amount replaces that account's running balance from that date; earlier days stay unchanged and subsequent days recalculate until the next balance update. It is not income or a bill. All accounts adds these independent account balances rather than overwriting a single combined total.
+
+For example, a $1,000 starting balance followed by a $200 payment on the same date ends at $800. Entering a bank's $800 end-of-day balance as that day's starting balance would apply the payment again. Future-dated updates affect the forecast from their date and cannot fund today's savings goals. Reopen an update in balance history or the day's details to edit or remove it. Removing a correction restores the earlier balance calculation; the server protects transfer dates from falling before an account's tracking begins.
+
+**Move money / Add transfer** records money between two distinct tracked accounts. Planned transfers affect forecasts; completed transfers affect recorded balances; cancelled transfers do neither. Transfers appear separately from income and bills and net to zero in All accounts. A future transfer cannot be marked completed. Recording a transfer does not instruct a bank to move money. Use an actual income receipt or a balance correction for funds arriving from outside the tracked accounts.
+
+### Savings goals and milestones
+
+Each goal belongs to a Savings account and has a target, allocated amount, start date, optional target date, and notes. An allocation earmarks existing savings; it does not make a deposit or increase the account's balance. Multiple active goals share the same account. Available funds are its **recorded balance through today minus the other active allocations**, with zero as the minimum budget for a new allocation. Planned income, planned transfers, scenarios, and future balance updates cannot fund a goal.
+
+New or increased allocations and account changes must fit the available balance. A goal can start at zero even when the account is overallocated. If the recorded balance later falls, existing allocations remain visible with a warning; reducing or leaving an existing allocation unchanged stays possible. Reconcile the real balance, record an actual completed transfer, or reduce allocations to resolve the shortfall. Updating a bank balance does not automatically distribute money across goals.
+
+Goal allocations can exceed their targets. Progress caps visually at 100%, while the full allocated amount remains reserved. Milestones at 25%, 50%, 75%, and 100% are saved when first reached and celebrated once. Lowering an allocation, raising the target, or archiving/restoring a goal does not erase earned milestones. The history retains allocation changes and notes.
+
+A funded goal stays reserved until its allocation is reduced or it is archived. **Archive goal** releases the earmark without moving cash and keeps the goal's history; **Restore goal** rechecks the account type and available funds. Archived goals may be edited, but do not reserve money until restored. Start dates can be in the future; a target date must be on or after the start date. These dates are planning labels, not scheduled deposits.
 
 ### Spending and test changes
 
 **Planning spending** is for everyday purchases and what-if amounts. It is saved separately and changes only Live Money's running balances. It does not create a bill, affect calendar/report totals, or become a recorded payment.
 
-**Try a change** creates temporary bill/income scenarios that clear on reload. **Save across app** opens the full entry form; completing it creates the real bill/income and removes that test change. **Reset scenario** clears the selected month's planning spending and temporary changes while retaining saved bills, income, payments, and opening balance.
+**Try a change** creates temporary bill/income scenarios that clear on reload. **Save across app** opens the full entry form; completing it creates the real bill/income and removes that test change. **Reset scenario** clears planning spending and temporary changes for the selected month and account scope. In All accounts it clears that month across accounts; in a named account or Unassigned it clears only that bucket. Saved bills, income, payments, transfers, and balance updates remain. Committing a scenario retains its selected account in the real-entry form.
 
 ### Repeating entries
 
@@ -94,15 +142,23 @@ Debt offers are proposals: unexpired settlement offers show a potential reduced 
 
 `Closed`, `Charged off`, and a removal date do not erase a balance. Set the actual current balance explicitly; `Paid` requires zero. These are tracking statuses, not confirmation from a credit bureau or creditor.
 
+### Bill reminders, printing, and mobile use
+
+Bills and plans default to a reminder three days before the planned payment date. Choose Off, the date itself, or a lead time in the editor. Income does not create bill reminders. Reminders use the **planned date**, while the original due date remains visible for a moved bill. Unpaid active archived bills still qualify; fully paid, cancelled, and collection items do not. Snoozing delays the reminder only and does not reschedule the bill.
+
+The Reminders page and header badge cover all accounts and months relative to today. Optional browser alerts require an explicit device opt-in and browser permission. They run **while Finance is open**, use a general message without bill names or amounts, and are not background push or email delivery. To receive reminders when the app is closed, download the selected month's `.ics` file and import it into a calendar that allows its alerts. Events use 9 a.m. in the calendar's local time and each bill's lead time. This file is a snapshot: after paying or moving bills, update the imported events or replace the old import.
+
+The print button opens the browser's print dialog for the current page, with page/month/account context and controls removed. Choose a printer or Save as PDF; expand schedule/history details first if they should appear. Hub pages also have a print action. On narrow screens, Live Money uses daily cards, Calendar offers a daily list, and record tables adapt or scroll within their panels. Navigation closes with Escape and retains keyboard focus within the open mobile menu.
+
 ### Archive versus cancel
 
 **Archive** hides an entry from ordinary lists but preserves its financial effect, including any active unpaid forecast. **Cancel** removes its unpaid remainder from the active forecast, preserving original obligations and recorded payments. Restore cancelled entries when they should become payable again. Use the archive/status filters to find retained records.
 
 ## Exports and a future project move
 
-Reports offers **Export month CSV** for the selected month's saved daily forecast and **Export all records** for a JSON snapshot of the app's materialized records, recurring definitions and custom dates, vendors, plans, debt/history, opening balances, and saved planning spending. Temporary test changes are excluded. JSON uses `schema_version: 2` and includes an export time; there is currently no import UI. It does not include Auth users, `finance_access`, or `finance_entry_history`, so use a database backup/export for a complete migration.
+Reports offers **Export month CSV** for the selected month/account saved daily forecast, including starting balances, dated adjustments, and transfer movement. **Export all accounts (JSON)** always includes all accounts and the app's materialized entries, payment snapshots, recurring/custom definitions, vendors, plans, debt/history, openings and balance updates, transfers, savings goals/history/milestones, reminder settings, and saved planning spending. Temporary test changes and device-local notification preferences are excluded. JSON uses `schema_version: 3` and includes an export time; there is currently no import UI. It does not include Auth users, `finance_access`, or `finance_entry_history`, so use a database backup/export for a complete migration.
 
-For a separate Supabase project, migrate all eleven tables, preserve IDs/relationships, cents, original dates, custom schedules, and history, and recreate the `finance_*` functions, indexes, constraints, RLS, and grants from all three migrations. Preserve or explicitly remap every `user_id` to the destination Auth account. The current authorization also depends on `hub_staff`, `hub_actor_can`, and the shared Hub session/context; those dependencies need an equivalent authorization design in a standalone app. The current Supabase environment variables are shared with the Hub, so moving finance alone also requires separating its connection/auth integration. Verify owner isolation and ledger totals before switching traffic.
+For a separate Supabase project, migrate all sixteen tables, preserve IDs/relationships, cents, signed account balances, original dates, custom schedules, payment account/method snapshots, goal milestones, and history, and recreate the `finance_*` functions, indexes, constraints, RLS, and grants from all four migrations. Preserve or explicitly remap every `user_id` to the destination Auth account. The current authorization also depends on `hub_staff`, `hub_actor_can`, and the shared Hub session/context; those dependencies need an equivalent authorization design in a standalone app. The current Supabase environment variables are shared with the Hub, so moving finance alone also requires separating its connection/auth integration. Verify owner isolation and ledger totals before switching traffic.
 
 ## Development checks
 
@@ -115,4 +171,4 @@ npm test
 npm run build
 ```
 
-`npm run test:finance` runs `tests/finance-calculations.mjs`, `tests/finance-vendors.mjs`, and `supabase/tests/finance.test.mjs`; it is also included in `npm test`. These cover calculations, original/planned/paid distinctions, custom recurrence, vendor links/history and URL validation, partial payments and reversals, plan/collection accounting, actor isolation, table/RPC grants, and RLS. Database tests use isolated PGlite fixtures and do not connect to hosted Supabase. The existing `tests/workspace-finance.mjs` covers the separate company accounting module.
+`npm run test:finance` runs `tests/finance-calculations.mjs`, `tests/finance-vendors.mjs`, `tests/finance-reminders.mjs`, and `supabase/tests/finance.test.mjs`; it is also included in `npm test`. These cover calculations and account-scoped forecasts, dated balance ordering, immutable payment attribution, transfer accounting, savings allocation limits and milestones, reminders/calendar exports, original/planned/paid distinctions, custom recurrence, vendor links/history and URL validation, partial payments and reversals, plan/collection accounting, actor isolation, table/RPC grants, and RLS. Database tests use isolated PGlite fixtures and do not connect to hosted Supabase. The existing `tests/workspace-finance.mjs` covers the separate company accounting module.

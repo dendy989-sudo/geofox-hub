@@ -1,0 +1,87 @@
+.fp-fieldset { border:0; margin:0; padding:0; min-width:0; }
+.fp-metrics { margin-bottom:0; }
+.fp-carry { margin:0; }
+.fp-carry .fn-button { margin-top:8px; }
+.fp-scope-caption { color:var(--fn-muted,#7c88a0); font-size:12px; margin:0; }
+.fp-month-heading { font-size:14px; margin:0 0 4px; }
+.fp-month-caption { margin:0; }
+.fp-tracking-note { font-size:12px; margin:0; }
+.fp-day-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:14px; border-radius:10px; background:#f6f7fc; }
+.fp-day-summary > span { display:flex; flex-direction:column; gap:6px; font-size:11px; color:#8791a7; }
+.fp-day-summary strong { font-size:16px; color:#4a5771; }
+.fp-anchor-details { display:flex; flex-direction:column; gap:10px; border:1px solid #d8d3eb; border-left:3px solid #9281c7; padding:14px; border-radius:9px; background:#faf8ff; }
+.fp-anchor-details > strong { font-size:12px; color:#6c5b9b; }
+.fp-anchor-line { display:flex; gap:10px; align-items:center; font-size:12px; }
+.fp-anchor-line > span:first-child { flex:1; min-width:0; }
+.fp-anchor-line small { display:block; color:#8791a7; font-size:10px; margin-top:4px; overflow-wrap:anywhere; }
+.fp-anchor-details p,.fp-transfer-list > p { margin:0; font-size:11px; line-height:1.6; color:#8791a7; }
+.fp-transfer-list h3 { margin:0 0 10px; font-size:13px; }
+.fp-transfer { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--fn-line,#edf0f6); font-size:12px; }
+.fp-transfer div { min-width:0; }
+.fp-transfer strong { display:block; overflow-wrap:anywhere; }
+.fp-transfer small { display:block; color:#8791a7; margin-top:4px; }
+.fp-transfer-list > p { margin-top:10px; }
+.fn-day-item .fp-recorded-payment { background:#f4f7fb; border-radius:5px; padding:8px; color:#63728a; }
+.fp-account-label { display:block; font-size:10px; color:#8791a7; margin-top:3px; }
+.fp-live-table { min-width:1030px; }
+.fp-live-table td { vertical-align:middle; }
+.fp-live-table td small { display:block; margin-top:4px; font-size:9px; color:#8b95a8; white-space:nowrap; }
+.fp-row-actions { flex-wrap:nowrap; gap:5px; }
+.fp-row-actions .fn-button { white-space:nowrap; }
+.fp-adjusted-row td:first-child { box-shadow:inset 3px 0 #9a8aca; }
+.fp-balance-tag { display:inline-flex; align-items:center; gap:4px; color:#8570b5; background:#f1edf9; border-radius:4px; padding:3px 5px; font-size:9px; font-weight:600; white-space:nowrap; }
+.fp-live-table .fp-balance-tag { margin-top:5px; }
+.fp-live-mobile { display:none; }
+.fp-day-card { padding:15px 16px; background:#fff; border:1px solid var(--fn-line,#e9edf5); border-radius:10px; min-width:0; break-inside:avoid; }
+.fp-day-card.today { background:#faf8ff; border-color:#cfc3ed; }
+.fp-day-card.adjusted { border-left:3px solid #9a8aca; }
+.fp-day-card-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.fp-day-card-head > button { border:0; background:transparent; color:#4c5974; padding:0; text-align:left; display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.fp-day-card-head strong { font-size:12px; }
+.fp-day-card-head .fn-end-balance { font-size:13px; white-space:nowrap; }
+.fp-day-card-start { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; font-size:10px; color:#8b95a8; margin-top:8px; }
+.fp-day-amounts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:15px 0 0; }
+.fp-day-amounts div { min-width:0; }
+.fp-day-amounts dt { font-size:10px; color:#909aaf; margin-bottom:5px; }
+.fp-day-amounts dd { font-size:12px; margin:0; overflow-wrap:anywhere; }
+.fp-day-amounts dd small { display:block; margin-top:3px; color:#9aa3b5; font-size:9px; }
+.fp-day-amounts .fn-live-spend { padding:3px 5px; font-size:11px; }
+.fp-day-card-actions { margin-top:15px; }
+.fp-day-card-actions .fn-button { min-height:35px; flex:1; justify-content:center; }
+.fp-calendar-views { flex-wrap:nowrap; flex-shrink:0; }
+.fp-calendar-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:0 22px 22px; }
+.fp-view-hidden { display:none; }
+@media(max-width:1150px) { .fp-calendar-list { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:700px) {
+  .fp-live-desktop { display:none; }
+  .fp-live-mobile { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:0 14px 14px; }
+  .fp-live-mobile .fp-day-amounts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .fp-planning .fn-panel-head { flex-wrap:wrap; gap:12px; }
+  .fp-planning .fn-toolbar { flex-wrap:wrap; gap:12px; }
+  .fp-calendar-list { padding:0 14px 14px; }
+  .fp-calendar-views { width:100%; }
+  .fp-calendar-views .fn-tab { flex:1; min-height:38px; }
+}
+@media(max-width:520px) {
+  .fp-live-mobile,.fp-calendar-list { grid-template-columns:1fr; }
+  .fp-live-mobile .fp-day-amounts { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .fp-day-summary { gap:9px; padding:12px; }
+  .fp-day-summary strong { font-size:14px; }
+  .fp-anchor-line { flex-wrap:wrap; }
+  .fp-anchor-line .fn-button { min-height:34px; }
+  .fp-planning .fn-calendar-scroll::before { content:"Swipe to see the full week, or choose Daily list above for a phone-friendly view."; }
+}
+@media print {
+  .fp-live-desktop { display:block !important; }
+  .fp-live-mobile { display:none !important; }
+  .fp-live-table { min-width:0; width:100%; font-size:8px; }
+  .fp-live-table td,.fp-live-table th { padding:5px; }
+  .fp-live-table td:last-child,.fp-live-table th:last-child { display:none; }
+  .fp-live-table .fn-live-spend { display:inline !important; border:0; padding:0; color:inherit; background:none; }
+  .fp-live-table .fn-live-spend svg { display:none; }
+  .fp-live-table .fn-day-label { display:flex !important; color:inherit; }
+  .fp-calendar-views,.fp-day-card-actions { display:none !important; }
+  .fp-calendar-list { grid-template-columns:repeat(2,minmax(0,1fr)); padding:0; }
+  .fp-calendar-list.fp-view-hidden,.fp-calendar-month.fp-view-hidden { display:none !important; }
+  .fp-planning .fn-calendar-scroll::before { display:none; }
+}

@@ -46,7 +46,7 @@ export async function loadFinanceData(context: HubContext, requestedMonth: strin
   // record by the server-authenticated user, and returns an atomic ledger snapshot.
   const { data, error } = await getHubService().rpc("finance_snapshot", { p_actor: context.user.id, p_through: through });
   if (error) financeDatabaseError(error);
-  if (!data || typeof data !== "object" || !Array.isArray(data.entries) || !Array.isArray(data.payments) || !Array.isArray(data.vendors)) {
+  if (!data || typeof data !== "object" || !["entries", "payments", "vendors", "accounts", "balance_updates", "transfers", "goals", "goal_history"].every(key => Array.isArray(data[key]))) {
     throw new HubError(503, "FINANCE_DATABASE_UNAVAILABLE", "Your finance records could not be read. Please refresh the page.");
   }
   return { ...data, user: { id: context.user.id, display_name: context.staff.displayName } } as FinanceData;

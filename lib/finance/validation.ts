@@ -1,4 +1,5 @@
 import { normalizeVendorUrl } from "./vendors.ts";
+import { BILL_PAYMENT_METHODS, INCOME_PAYMENT_METHODS } from "./types.ts";
 
 /** Input checks are shared by the API and tests; never trust client ownership fields. */
 export class FinanceInputError extends Error {
@@ -54,6 +55,18 @@ function vendorLink(p: Record<string, unknown>): Record<string, unknown> {
   if (p.vendor_id !== undefined) return { vendor_id: p.vendor_id === null ? null : uuid(p.vendor_id, "Vendor") };
   return {}; // Older clients and occurrence edits preserve an omitted association.
 }
+function accountLink(p: Record<string, unknown>): Record<string, unknown> {
+  return p.account_id === undefined ? {} : { account_id: p.account_id === null ? null : uuid(p.account_id, "Account") };
+}
+function forecastFields(p: Record<string, unknown>, kind: "bill" | "income"): Record<string, unknown> {
+  const fields = accountLink(p);
+  if (p.payment_method !== undefined) fields.payment_method = choice(p.payment_method, kind === "bill" ? BILL_PAYMENT_METHODS : INCOME_PAYMENT_METHODS, "payment or receipt method");
+  if (p.reminder_days !== undefined) {
+    if (p.reminder_days !== null && (typeof p.reminder_days !== "number" || !Number.isInteger(p.reminder_days) || p.reminder_days < 0 || p.reminder_days > 30)) return fail("Reminder lead time must be between 0 and 30 days, or turned off.");
+    fields.reminder_days = p.reminder_days;
+  }
+  return fields;
+}
 function customRepeat(p: Record<string, unknown>, frequency: string, due: string, end: string | null): Record<string, unknown> {
   if (frequency !== "custom") return { custom_mode: null, custom_month_days: [], custom_dates: [] };
   const mode = choice(p.custom_mode, ["month_days", "specific_dates"], "custom schedule");
@@ -108,7 +121,8 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
       const end = financeDate(p.end_date, "Repeat end date", true);
       if (end && due && end < due) return fail("The repeat end date must be on or after the first due date.");
       const frequency = choice(p.frequency ?? "once", ["once", "weekly", "biweekly", "monthly", "yearly", "custom"], "repeat frequency");
-      result = { id: optionalId(), kind: choice(p.kind, ["bill", "income"], "entry type"), title: text(p.title, "Title"), category: text(p.category, "Category", 80), expense_type: choice(p.expense_type ?? "bill", ["bill", "installment", "payment_plan"], "expense type"), amount_cents: cents(p.amount_cents, "Amount", 1), original_due_date: due, scheduled_date: financeDate(p.scheduled_date, "Scheduled date"), notes: text(p.notes, "Notes", 4000, false), frequency, end_date: end, ...customRepeat(p, frequency, due!, end), ...vendorLink(p) };
+      const kind = choice(p.kind, ["bill", "income"], "entry type");
+      result = { id: optionalId(), kind, title: text(p.title, "Title"), category: text(p.category, "Category", 80), expense_type: choice(p.expense_type ?? "bill", ["bill", "installment", "payment_plan"], "expense type"), amount_cents: cents(p.amount_cents, "Amount", 1), original_due_date: due, scheduled_date: financeDate(p.scheduled_date, "Scheduled date"), notes: text(p.notes, "Notes", 4000, false), frequency, end_date: end, ...customRepeat(p, frequency, due!, end), ...vendorLink(p), ...forecastFields(p, kind) };
       break;
     }
     case "entry_status":
@@ -118,7 +132,9 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
     case "move_entry":
       result = { id: id(), scheduled_date: financeDate(p.scheduled_date, "Payment date"), note: text(p.note, "Move note", 1000, false) }; break;
     case "record_payment":
-      result = { id: id(), entry_id: uuid(p.entry_id, "Entry"), amount_cents: cents(p.amount_cents, "Payment amount", 1), paid_on: financeDate(p.paid_on, "Paid date"), note: text(p.note, "Payment note", 1000, false) }; break;
+      result = { id: id(), entry_id: uuid(p.entry_id, "Entry"), amount_cents: cents(p.amount_cents, "Payment amount", 1), paid_on: financeDate(p.paid_on, "Paid date"), note: text(p.note, "Payment note", 1000, false), ...accountLink(p) };
+      if (p.payment_method !== undefined) result.payment_method = choice(p.payment_method, [...BILL_PAYMENT_METHODS, ...INCOME_PAYMENT_METHODS], "payment or receipt method");
+      break;
     case "remove_payment":
       result = { id: id() }; break;
     case "save_series":
@@ -129,7 +145,7 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
       const installment = cents(p.installment_amount_cents, "Installment", 1)!;
       if (paid > total) return fail("Already paid cannot exceed the total balance.");
       if (Math.ceil((total - paid) / installment) > 240) return fail("A plan can include at most 240 installments. Increase the installment amount.");
-      result = { id: optionalId(), title: text(p.title, "Plan name"), creditor: text(p.creditor, "Creditor", 200), kind: choice(p.kind, ["installment", "payment_plan"], "plan type"), category: text(p.category, "Category", 80), total_amount_cents: total, opening_paid_cents: paid, installment_amount_cents: installment, frequency: choice(p.frequency, ["weekly", "biweekly", "monthly"], "frequency"), first_due_date: financeDate(p.first_due_date, "First due date"), notes: text(p.notes, "Notes", 4000, false), ...vendorLink(p) }; break;
+      result = { id: optionalId(), title: text(p.title, "Plan name"), creditor: text(p.creditor, "Creditor", 200), kind: choice(p.kind, ["installment", "payment_plan"], "plan type"), category: text(p.category, "Category", 80), total_amount_cents: total, opening_paid_cents: paid, installment_amount_cents: installment, frequency: choice(p.frequency, ["weekly", "biweekly", "monthly"], "frequency"), first_due_date: financeDate(p.first_due_date, "First due date"), notes: text(p.notes, "Notes", 4000, false), ...vendorLink(p), ...forecastFields(p, "bill") }; break;
     }
     case "plan_status":
       result = { id: id(), status: choice(p.status, ["active", "cancelled"], "status") }; break;
@@ -137,6 +153,36 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
       result = { id: id(), name: vendorName(p.name), url: vendorUrl(p.url), notes: text(p.notes, "Vendor notes", 4000, false) }; break;
     case "vendor_status":
       result = { id: id(), archived: bool(p.archived, "Archive vendor") }; break;
+    case "save_account": {
+      const kind = choice(p.kind, ["checking", "savings", "cash", "credit_card"], "account type");
+      const lastFour = p.last_four === null || p.last_four === undefined || p.last_four === "" ? null : text(p.last_four, "Last four digits", 4);
+      if (lastFour !== null && !/^\d{4}$/.test(lastFour)) return fail("Enter exactly the last four digits, or leave this blank.");
+      const limit = cents(p.credit_limit_cents, "Credit limit", 0, true);
+      if (kind !== "credit_card" && limit !== null) return fail("A credit limit applies only to a credit card.");
+      result = { id: id(), name: text(p.name, "Account name"), institution: text(p.institution, "Institution", 200, false), kind, last_four: lastFour, opening_date: financeDate(p.opening_date, "Opening date"), opening_balance_cents: cents(p.opening_balance_cents, "Opening balance", -MAX_CENTS), credit_limit_cents: limit, notes: text(p.notes, "Account notes", 4000, false) }; break;
+    }
+    case "account_status":
+      result = { id: id(), archived: bool(p.archived, "Archive account") }; break;
+    case "save_balance_update":
+      result = { id: optionalId(), ...accountLink(p), date: financeDate(p.date, "Balance date"), balance_cents: cents(p.balance_cents, "Balance", -MAX_CENTS), notes: text(p.notes, "Balance notes", 4000, false) }; break;
+    case "remove_balance_update":
+      result = { id: id() }; break;
+    case "save_transfer": {
+      const from = uuid(p.from_account_id, "From account")!, to = uuid(p.to_account_id, "To account")!;
+      if (from.toLowerCase() === to.toLowerCase()) return fail("Choose two different accounts for a transfer.");
+      result = { id: id(), from_account_id: from, to_account_id: to, amount_cents: cents(p.amount_cents, "Transfer amount", 1), date: financeDate(p.date, "Transfer date"), status: choice(p.status, ["planned", "completed", "cancelled"], "transfer status"), notes: text(p.notes, "Transfer notes", 4000, false) }; break;
+    }
+    case "transfer_status":
+      result = { id: id(), status: choice(p.status, ["planned", "completed", "cancelled"], "transfer status") }; break;
+    case "snooze_reminder":
+      result = { id: id(), until: financeDate(p.until, "Reminder date", true) }; break;
+    case "save_goal": {
+      const start = financeDate(p.start_date, "Goal start date"), target = financeDate(p.target_date, "Goal target date", true);
+      if (start && target && target < start) return fail("The target date must be on or after the goal start date.");
+      result = { id: id(), account_id: uuid(p.account_id, "Savings account"), title: text(p.title, "Goal name"), target_cents: cents(p.target_cents, "Goal target", 1), allocated_cents: cents(p.allocated_cents, "Allocated savings"), start_date: start, target_date: target, notes: text(p.notes, "Goal notes", 4000, false), change_note: text(p.change_note, "Allocation note", 1000, false) }; break;
+    }
+    case "goal_status":
+      result = { id: id(), archived: bool(p.archived, "Archive goal") }; break;
     case "save_debt": {
       const balance = cents(p.current_balance_cents, "Current balance")!;
       const status = choice(p.status, ["open", "charged_off", "closed", "paid"], "debt status");
@@ -154,11 +200,11 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
     case "save_month":
       result = { month: financeMonth(p.month), opening_balance_cents: cents(p.opening_balance_cents, "Opening balance", -MAX_CENTS) }; break;
     case "save_spending":
-      result = { id: optionalId(), date: financeDate(p.date, "Spending date"), amount_cents: cents(p.amount_cents, "Spending amount", 1), title: text(p.title, "Spending description", 200) }; break;
+      result = { id: optionalId(), date: financeDate(p.date, "Spending date"), amount_cents: cents(p.amount_cents, "Spending amount", 1), title: text(p.title, "Spending description", 200), ...accountLink(p) }; break;
     case "remove_spending":
       result = { id: id() }; break;
     case "clear_spending":
-      result = { month: financeMonth(p.month) }; break;
+      result = { month: financeMonth(p.month), ...accountLink(p) }; break;
     default: return fail("This finance action is not available.");
   }
   return { action, payload: Object.fromEntries(Object.entries(result).filter(([, value]) => value !== undefined)) };
