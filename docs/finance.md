@@ -10,20 +10,22 @@ Finance uses the **existing Geofox Supabase project** and existing staff sign-in
 - Existing MFA rules apply: enrolled factors require a verified session, and `HUB_REQUIRE_MFA=true` requires owner enrollment. See the [Hub setup guide](../README.md#3-create-and-authorize-your-owner-account).
 - The server reuses `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and server-only `SUPABASE_SECRET_KEY`. The existing legacy anon/service-role alternatives are supported. There are no additional finance-specific credentials.
 
-Apply both finance migrations after the existing Hub migrations, in this order:
+Apply the finance migrations after the existing Hub migrations, in this order:
 
 1. [20261105164728_private_finance_dashboard.sql](../supabase/migrations/20261105164728_private_finance_dashboard.sql) creates the finance schema. Its allowlist bootstrap selects the already verified, active owner `janna@geofoxapps.com`; it does not create an Auth account, grant a Hub role, or admit every owner automatically.
 2. [20261105170745_finance_access_service_readonly.sql](../supabase/migrations/20261105170745_finance_access_service_readonly.sql) removes inherited Supabase default privileges and grants `service_role` only `SELECT` on `finance_access`. Allowlist changes are administered through database migrations, not app writes.
+3. [20261105175613_finance_custom_dates_vendors.sql](../supabase/migrations/20261105175613_finance_custom_dates_vendors.sql) adds custom repeating schedules, reusable vendors, optional vendor links on entries/series/plans, and the corresponding private API operations.
 
 Both `/finance` and `/api/finance` enforce owner access. Requests use the server-verified user ID, and database functions recheck the allowlist and ownership. All finance tables enable RLS and deny direct access to `anon` and `authenticated`; only the server role can use the finance functions. The browser cannot update `finance_access`. The page also requests no search indexing. Public availability will require an intentional access-model change, not just a navigation link.
 
 ### Database inventory
 
-All ten app tables are in `public` with the `finance_` prefix:
+All eleven app tables are in `public` with the `finance_` prefix:
 
 | Table | Purpose |
 | --- | --- |
 | `finance_access` | Explicit owner allowlist |
+| `finance_vendors` | Reusable company names, payment websites, notes, and archive status |
 | `finance_months` | Saved opening balance for each owner/month |
 | `finance_series` | Repeating bill and income definitions |
 | `finance_plans` | Finite installment and payment-plan agreements |
@@ -46,6 +48,7 @@ Choose a month in the header. Start by setting its **Starting balance** to the m
 | Bills | Category totals, original-month versus planned-date views, monthly paid progress, and overdue/moved/paid/cancelled/collection/archive filters |
 | Income | Expected income, recorded receipts, overdue income, and recurring-income controls |
 | Payments | Finite payment plans, installment progress and schedules, and individual bills classified as installments or payment-plan payments |
+| Vendors | Reusable companies, payment websites, linked bills/income, and manually recorded payment/receipt history |
 | Credit & collections | Original/current creditors, current debt balances, offers, status, dates, notes, and change history |
 | Reports | Saved cash-flow outlook, recorded receipts/payments, original commitments by category, plan progress, and exports |
 
@@ -65,9 +68,19 @@ The saved daily forecast combines actual receipts/payments on their recorded dat
 
 ### Repeating entries
 
-Bills and income can repeat weekly, every two weeks, monthly, or yearly, with an optional end date. Loading finance materializes occurrences through at least the current month plus five months, or through a later selected month. Month-end dates clamp to valid calendar days.
+Bills and income can repeat weekly, every two weeks, monthly, yearly, or with **Custom dates**, with an optional end date. Loading finance materializes occurrences through at least the current month plus five months, or through a later selected month. Month-end dates clamp to valid calendar days.
+
+Custom dates has two modes. **Choose days each month** selects any days 1–31, such as the 1st and 15th. Days beyond a shorter month's length use its final day, and overlapping dates create only one occurrence. The original due date must match a selected day after this month-end adjustment. **Choose specific calendar dates** creates a finite list of up to 240 dates. The original due date is automatically included as the first occurrence; additional dates must be on or after it and no later than an optional end date. Duplicate dates are removed. Reopen an occurrence to inspect its saved pattern or expand the full date list; editing an occurrence does not rewrite that pattern.
 
 Editing, moving, paying, cancelling, or archiving an occurrence affects that occurrence only. **Pause recurring series** stops new occurrence generation; already generated entries stay in place. Resuming fills missing occurrences from the original schedule through the forecast horizon. To change future recurring terms, pause the old series, create a new one, and separately cancel already generated future entries that should no longer apply.
+
+### Vendors and payment websites
+
+Choose an optional vendor in **Add bill**, **Add income**, or the payment-plan editor. Reuse an existing company or choose **Add a new vendor** to enter its name and optional website. A website without a scheme receives `https://`; links accept HTTP(S) and open in a new tab. Saving the entry also saves a newly entered vendor for reuse. Change an existing vendor's name, website, or notes on **Vendors**, where the change applies to its linked records.
+
+Vendor details show linked bills/income and the payments or receipts manually recorded against those entries, with all-history and selected-month views. Reversed payments remain visible but do not inflate paid totals. A plan's “already paid” opening amount does not create dated payment history. Opening a payment website does not send or record a payment; pay there and then record the actual payment in Finance.
+
+Changing the vendor on one recurring occurrence affects only that occurrence. Changing a plan's vendor updates all its installments, including the grouping of their recorded history. **Archive vendor** hides it from new choices while preserving existing links, repeating schedules, and history; restore it to use it on new records. Names are unique within the account, including archived vendors.
 
 ### Plans, debt, and collections
 
@@ -87,9 +100,9 @@ Debt offers are proposals: unexpired settlement offers show a potential reduced 
 
 ## Exports and a future project move
 
-Reports offers **Export month CSV** for the selected month's saved daily forecast and **Export all records** for a JSON snapshot of the app's materialized records, recurring definitions, plans, debt/history, opening balances, and saved planning spending. Temporary test changes are excluded. JSON includes a schema version and export time; there is currently no import UI. It does not include Auth users, `finance_access`, or `finance_entry_history`, so use a database backup/export for a complete migration.
+Reports offers **Export month CSV** for the selected month's saved daily forecast and **Export all records** for a JSON snapshot of the app's materialized records, recurring definitions and custom dates, vendors, plans, debt/history, opening balances, and saved planning spending. Temporary test changes are excluded. JSON uses `schema_version: 2` and includes an export time; there is currently no import UI. It does not include Auth users, `finance_access`, or `finance_entry_history`, so use a database backup/export for a complete migration.
 
-For a separate Supabase project, migrate all ten tables, preserve IDs/relationships, cents, original dates, and history, and recreate the five `finance_*` functions, indexes, constraints, RLS, and grants from both migrations. Preserve or explicitly remap every `user_id` to the destination Auth account. The current authorization also depends on `hub_staff`, `hub_actor_can`, and the shared Hub session/context; those dependencies need an equivalent authorization design in a standalone app. The current Supabase environment variables are shared with the Hub, so moving finance alone also requires separating its connection/auth integration. Verify owner isolation and ledger totals before switching traffic.
+For a separate Supabase project, migrate all eleven tables, preserve IDs/relationships, cents, original dates, custom schedules, and history, and recreate the `finance_*` functions, indexes, constraints, RLS, and grants from all three migrations. Preserve or explicitly remap every `user_id` to the destination Auth account. The current authorization also depends on `hub_staff`, `hub_actor_can`, and the shared Hub session/context; those dependencies need an equivalent authorization design in a standalone app. The current Supabase environment variables are shared with the Hub, so moving finance alone also requires separating its connection/auth integration. Verify owner isolation and ledger totals before switching traffic.
 
 ## Development checks
 
@@ -102,4 +115,4 @@ npm test
 npm run build
 ```
 
-`npm run test:finance` runs `tests/finance-calculations.mjs` and `supabase/tests/finance.test.mjs`; it is also included in `npm test`. These cover calculations, original/planned/paid distinctions, recurrence, partial payments and reversals, plan/collection accounting, validation, actor isolation, table/RPC grants, and RLS. Database tests use isolated PGlite fixtures and do not connect to hosted Supabase. The existing `tests/workspace-finance.mjs` covers the separate company accounting module.
+`npm run test:finance` runs `tests/finance-calculations.mjs`, `tests/finance-vendors.mjs`, and `supabase/tests/finance.test.mjs`; it is also included in `npm test`. These cover calculations, original/planned/paid distinctions, custom recurrence, vendor links/history and URL validation, partial payments and reversals, plan/collection accounting, actor isolation, table/RPC grants, and RLS. Database tests use isolated PGlite fixtures and do not connect to hosted Supabase. The existing `tests/workspace-finance.mjs` covers the separate company accounting module.

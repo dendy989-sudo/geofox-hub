@@ -8,6 +8,7 @@ import type { EntryKind, FinanceData, FinanceDebt, FinanceEntry, FinancePlan, Re
 import { EntryEditor, PaymentEditor, MoveEditor, PlanEditor, DebtEditor } from "./editors";
 import { BillsPanel, IncomePanel, PaymentsPanel, DebtsPanel } from "./records";
 import { OverviewPanel } from "./overview";
+import { VendorsPanel } from "./vendors";
 import { CalendarPanel, LiveMoneyPanel, StartingBalanceEditor, type DraftChange } from "./planning";
 import { monthLabel } from "./shared";
 import "@/app/admin/admin.css";
@@ -23,6 +24,7 @@ const NAV: { id: string; label: string; icon: IconName; description: string }[] 
   { id: "bills", label: "Bills", icon: "checklist", description: "Know what was due, what’s paid, and what still needs a plan." },
   { id: "income", label: "Income", icon: "coins", description: "Plan your paydays and keep track of the money you’ve received." },
   { id: "payments", label: "Payments", icon: "layers", description: "Every installment and payment plan, with a clear view of your progress." },
+  { id: "vendors", label: "Vendors", icon: "globe", description: "Your companies, payment links, and recorded history, all in one place." },
   { id: "credit", label: "Credit & collections", icon: "shield", description: "Organize debts, collectors, balance changes, and offers in one place." },
   { id: "reports", label: "Reports", icon: "chart", description: "Understand your monthly commitments and the progress you’re making." },
 ];
@@ -106,6 +108,7 @@ export function FinanceWorkspace({ initialData, initialMonth }: { initialData: F
       case "bills": return <BillsPanel {...props} />;
       case "income": return <IncomePanel {...props} />;
       case "payments": return <PaymentsPanel {...props} />;
+      case "vendors": return <VendorsPanel {...props} />;
       case "credit": return <DebtsPanel {...props} />;
       case "reports": return <ReportsPanel {...props} />;
       default: return <OverviewPanel {...props} openBalance={openBalance} navigate={navigate} />;

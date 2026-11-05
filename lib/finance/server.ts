@@ -13,6 +13,9 @@ function financeDatabaseError(error: FinanceDatabaseError): never {
   if (error.code === "P0002") throw new HubError(404, "FINANCE_RECORD_NOT_FOUND", "This finance record was not found. Refresh the page and try again.");
   // These are deliberately authored business-rule messages from the private RPC.
   if (error.code === "P0001") throw new HubError(409, "FINANCE_CHANGE_REJECTED", error.message ?? "This change cannot be applied to the current record.");
+  if (error.code === "23505" && error.message?.includes("finance_vendors_user_name_idx")) {
+    throw new HubError(409, "FINANCE_VENDOR_EXISTS", "A vendor with this name already exists. Choose it from your vendors, or restore it if archived.");
+  }
   if (error.code === "23505") throw new HubError(409, "FINANCE_RECORD_EXISTS", "This change already exists or the record changed. Refresh the page before trying again.");
   if (["22023", "23514", "23502", "23503", "22P02", "22007", "22008", "22003"].includes(error.code ?? "")) {
     throw new HubError(400, "INVALID_FINANCE_INPUT", "Check the amounts and dates. Installments must end by 2100 and every required field must be completed.");
@@ -43,7 +46,7 @@ export async function loadFinanceData(context: HubContext, requestedMonth: strin
   // record by the server-authenticated user, and returns an atomic ledger snapshot.
   const { data, error } = await getHubService().rpc("finance_snapshot", { p_actor: context.user.id, p_through: through });
   if (error) financeDatabaseError(error);
-  if (!data || typeof data !== "object" || !Array.isArray(data.entries) || !Array.isArray(data.payments)) {
+  if (!data || typeof data !== "object" || !Array.isArray(data.entries) || !Array.isArray(data.payments) || !Array.isArray(data.vendors)) {
     throw new HubError(503, "FINANCE_DATABASE_UNAVAILABLE", "Your finance records could not be read. Please refresh the page.");
   }
   return { ...data, user: { id: context.user.id, display_name: context.staff.displayName } } as FinanceData;
