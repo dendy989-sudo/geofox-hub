@@ -43,6 +43,12 @@ const legacyPayment={id:randomUUID(),entry_id:legacyBill.id,amount_cents:2000,pa
 await mutate('record_payment',legacyPayment);
 const accountsMigration = await readFile(new URL('../migrations/20261105184742_finance_accounts_balances_goals.sql', import.meta.url), 'utf8');
 await db.exec(accountsMigration);
+const legacyDebt=debt({title:'Debt saved before household labels'});
+await mutate('save_debt',legacyDebt);
+const legacyHouseholdSnapshot=await snapshot();
+const householdMigration=await readFile(new URL('../migrations/20261105201038_finance_debt_household_people.sql', import.meta.url), 'utf8');
+await db.exec(householdMigration);
+const migratedHouseholdSnapshot=await snapshot();
 async function one(sql, params = []) { return (await db.query(sql, params)).rows[0]; }
 async function mutate(action, payload, actor = owner, validate = true) {
   const p = validate ? validateFinanceMutation(action, payload).payload : payload;
@@ -65,11 +71,12 @@ test('migrations are repeatable under Supabase default grants, all tables use RL
   await db.exec(readonlyMigration);
   await db.exec(customVendorsMigration);
   await db.exec(accountsMigration);
+  await db.exec(householdMigration);
   assert.deepEqual((await db.query('select user_id from public.finance_access')).rows.map(r=>r.user_id), [owner]);
   const tables = (await db.query("select c.relname,c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relname like 'finance_%' and relkind='r'")).rows;
   assert.equal(tables.length,16); assert.ok(tables.every(t=>t.relrowsecurity));
   const functions=(await db.query("select proname,prosecdef from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).rows;
-  assert.equal(functions.length,12); assert.ok(functions.every(f=>f.prosecdef===false));
+  assert.equal(functions.length,13); assert.ok(functions.every(f=>f.prosecdef===false));
   for (const role of ['anon','authenticated']) {
     assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and has_function_privilege($1,p.oid,'EXECUTE')",[role])).n,0);
   }
@@ -85,6 +92,7 @@ test('migrations are repeatable under Supabase default grants, all tables use RL
   const serviceEntry=entry(); await mutate('save_entry',serviceEntry);
   await mutate('record_payment',{id:randomUUID(),entry_id:serviceEntry.id,amount_cents:100,paid_on:'2026-01-15'});
   const serviceVendor=vendor(); await mutate('save_vendor',serviceVendor);
+  await mutate('save_debt',debt({responsible_people:['Service owner','Household member']}));
   await denied(()=>db.query('delete from public.finance_vendors where id=$1',[serviceVendor.id]),'42501');
   const serviceAccount=account({kind:'savings'}); await mutate('save_account',serviceAccount);
   assert.equal(await actual(serviceAccount.id),100000);
@@ -517,7 +525,7 @@ test('SQL rejects unsafe vendor URLs and treats SQL-like names and URLs as data'
 });
 
 test('custom/vendor migration can be reapplied with financial history and preserves private grants', async () => {
-  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); const after=await snapshot();
+  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); await db.exec(householdMigration); const after=await snapshot();
   assert.deepEqual(after,before);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_vendors','DELETE,TRUNCATE,TRIGGER,REFERENCES') granted")).granted,false);
@@ -532,7 +540,7 @@ test('account migration preserves legacy cash history and backfills reminders on
   assert.equal(p.account_id,null); assert.equal(p.payment_method,'manual'); assert.equal(p.amount_cents,2000);
   await mutate('save_entry',{...legacyBill,reminder_days:null});
   await mutate('save_entry',{...legacyIncome,reminder_days:5});
-  await db.exec(accountsMigration); s=await snapshot();
+  await db.exec(accountsMigration); await db.exec(householdMigration); s=await snapshot();
   assert.equal(s.entries.find(e=>e.id===legacyBill.id).reminder_days,null);
   assert.equal(s.entries.find(e=>e.id===legacyIncome.id).reminder_days,5);
   const a=account(); await mutate('save_account',a);
@@ -834,11 +842,159 @@ test('collection reversal restores cash to its recorded account even after the b
 });
 
 test('account migration is repeatable with posted cash and savings history, with least-privilege grants', async () => {
-  const before=await snapshot(); await db.exec(accountsMigration); const after=await snapshot(); assert.deepEqual(after,before);
+  const before=await snapshot(); await db.exec(accountsMigration); await db.exec(householdMigration); const after=await snapshot(); assert.deepEqual(after,before);
   for(const table of ['finance_accounts','finance_transfers','finance_savings_goals','finance_goal_history']) {
     assert.equal((await one("select has_table_privilege('service_role',$1,'DELETE,TRUNCATE,REFERENCES,TRIGGER') granted",[`public.${table}`])).granted,false,table);
   }
   assert.equal((await one("select has_table_privilege('service_role','public.finance_goal_history','UPDATE') granted")).granted,false);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_balance_updates','DELETE') granted")).granted,true);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
+});
+
+test('household migration adds empty labels to legacy debts without changing money, timestamps or history', () => {
+  assert.ok(migratedHouseholdSnapshot.debts.every(d=>Array.isArray(d.responsible_people) && d.responsible_people.length===0));
+  const withoutNewField={...migratedHouseholdSnapshot,debts:migratedHouseholdSnapshot.debts.map(({responsible_people,...d})=>d)};
+  assert.deepEqual(withoutNewField,legacyHouseholdSnapshot);
+  assert.equal(migratedHouseholdSnapshot.debts.find(d=>d.id===legacyDebt.id).current_balance_cents,10000);
+});
+
+test('household API input normalizes names, preserves omission and rejects malformed names', () => {
+  const people=['  Janna\u00a0  Smith  ','JANNA SMITH','Alex','aLeX','Élodie  D’Arcy'];
+  const expected=['Janna Smith','Alex','Élodie D’Arcy'];
+  assert.deepEqual(validateFinanceMutation('save_debt',debt({responsible_people:people})).payload.responsible_people,expected);
+  assert.deepEqual(validateFinanceMutation('transfer_collections',{entry_id:randomUUID(),responsible_people:people}).payload.responsible_people,expected);
+  assert.equal(Object.hasOwn(validateFinanceMutation('save_debt',debt()).payload,'responsible_people'),false);
+  assert.equal(Object.hasOwn(validateFinanceMutation('transfer_collections',{entry_id:randomUUID()}).payload,'responsible_people'),false);
+  assert.deepEqual(validateFinanceMutation('save_debt',debt({responsible_people:[]})).payload.responsible_people,[]);
+  const twenty=Array.from({length:20},(_,i)=>`Person ${i+1}`);
+  assert.deepEqual(validateFinanceMutation('save_debt',debt({responsible_people:[...twenty,' PERSON 1 ']})).payload.responsible_people,twenty);
+  const codePoints='\u{10428}'.repeat(100);
+  assert.deepEqual(validateFinanceMutation('save_debt',debt({responsible_people:[codePoints]})).payload.responsible_people,[codePoints]);
+  for(const invalid of [null,'Alice',{},[null],[1],[{}],[['Alice']],[''],['   '],['Alice\nBob'],['\tAlice'],['Alice\u007f'],['Alice\u0085'],['Alice\u2028Bob'],['Alice\u2029Bob'],['A'.repeat(101)],[codePoints+'A'],[...twenty,'Person 21']]) {
+    assert.throws(()=>validateFinanceMutation('save_debt',debt({responsible_people:invalid})),{name:'FinanceInputError'});
+    assert.throws(()=>validateFinanceMutation('transfer_collections',{entry_id:randomUUID(),responsible_people:invalid}),{name:'FinanceInputError'});
+  }
+});
+
+test('SQL independently normalizes household names and rejects noncanonical direct writes', async () => {
+  const spaces=' \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000\ufeff';
+  const names=[`${spaces}Janna${spaces}Smith${spaces}`,'janna smith','Élodie',"O'Neil"]; const expected=['Janna Smith','Élodie',"O'Neil"];
+  const d=debt({responsible_people:names}); await mutate('save_debt',d,owner,false);
+  assert.deepEqual((await snapshot()).debts.find(x=>x.id===d.id).responsible_people,expected);
+  for(const [input,normalized] of [[['İpek','Ipek'],['İpek','Ipek']],[['ΟΣ','ος'],['ΟΣ']]]) {
+    const clean=validateFinanceMutation('save_debt',debt({responsible_people:input})).payload.responsible_people;
+    const sql=(await one('select public.finance_responsible_people($1::jsonb) names',[JSON.stringify(input)])).names;
+    assert.deepEqual(clean,normalized); assert.deepEqual(sql,normalized);
+  }
+  const twenty=Array.from({length:20},(_,i)=>`Person ${i+1}`), codePoints='\u{10428}'.repeat(100);
+  assert.deepEqual((await one('select public.finance_responsible_people($1::jsonb) names',[JSON.stringify([...twenty,' PERSON 1 '])])).names,twenty);
+  assert.deepEqual((await one('select public.finance_responsible_people($1::jsonb) names',[JSON.stringify([codePoints])])).names,[codePoints]);
+  const before=(await snapshot()).debts.find(x=>x.id===d.id);
+  for(const invalid of [null,'Alice',{},[null],[false],[{}],[['Alice']],[''],['Alice\nBob'],['\tAlice'],['Alice\u007f'],['Alice\u0085'],['Alice\u2028Bob'],['Alice\u2029Bob'],['A'.repeat(101)],Array.from({length:21},(_,i)=>`Person ${i}`)]) {
+    await denied(()=>mutate('save_debt',{...d,responsible_people:invalid},owner,false));
+  }
+  assert.deepEqual((await snapshot()).debts.find(x=>x.id===d.id),before,'Rejected assignments do not change even the timestamp');
+  await denied(()=>db.query("update public.finance_debts set responsible_people=array[' Alice '] where id=$1",[d.id]),'23514');
+  await denied(()=>db.query("update public.finance_debts set responsible_people=array['Alice','alice'] where id=$1",[d.id]),'23514');
+  await denied(()=>db.query('update public.finance_debts set responsible_people=null where id=$1',[d.id]),'23502');
+  await denied(()=>db.query("update public.finance_debts set responsible_people=array[['Alice'],['Bob']] where id=$1",[d.id]));
+  const injection="Robert'); drop table finance_debts;--";
+  await mutate('save_debt',{...d,responsible_people:[injection]},owner,false);
+  assert.deepEqual((await snapshot()).debts.find(x=>x.id===d.id).responsible_people,[injection]);
+  assert.equal((await one("select to_regclass('public.finance_debts') is not null present")).present,true);
+});
+
+test('one shared debt keeps one balance and records assignment changes, preserving old forms and allowing clear', async () => {
+  const d=debt({responsible_people:['Alice','Bob']}); await mutate('save_debt',d);
+  let s=await snapshot(); let saved=s.debts.find(x=>x.id===d.id);
+  assert.deepEqual(saved.responsible_people,['Alice','Bob']);
+  assert.equal(s.debts.filter(x=>x.id===d.id).length,1); assert.equal(saved.current_balance_cents,10000);
+  let h=s.debt_history.filter(x=>x.debt_id===d.id);
+  assert.equal(h.length,1); assert.deepEqual(h[0].details.previous_responsible_people,[]); assert.deepEqual(h[0].details.responsible_people,['Alice','Bob']);
+  const {responsible_people,...oldForm}=d;
+  await mutate('save_debt',{...oldForm,notes:'Collector letter received'});
+  s=await snapshot(); saved=s.debts.find(x=>x.id===d.id);
+  assert.deepEqual(saved.responsible_people,['Alice','Bob']);
+  h=s.debt_history.filter(x=>x.debt_id===d.id); assert.equal(h.length,2);
+  assert.deepEqual(h[0].details.previous_responsible_people,['Alice','Bob']); assert.deepEqual(h[0].details.responsible_people,['Alice','Bob']);
+  await mutate('save_debt',{...saved,responsible_people:[]});
+  s=await snapshot(); saved=s.debts.find(x=>x.id===d.id); h=s.debt_history.filter(x=>x.debt_id===d.id);
+  assert.deepEqual(saved.responsible_people,[]); assert.equal(saved.current_balance_cents,10000); assert.equal(h.length,3);
+  assert.deepEqual(h[0].details.previous_responsible_people,['Alice','Bob']); assert.deepEqual(h[0].details.responsible_people,[]);
+  await mutate('save_debt',saved);
+  assert.equal((await snapshot()).debt_history.filter(x=>x.debt_id===d.id).length,3,'An unchanged save adds no assignment history');
+});
+
+test('bill collections transfer stores household names once and retries preserve subsequent edits', async () => {
+  const e=entry(); await mutate('save_entry',e);
+  const payment={id:randomUUID(),entry_id:e.id,amount_cents:2500,paid_on:'2026-01-15'}; await mutate('record_payment',payment);
+  const payload={id:randomUUID(),entry_id:e.id,collector:'Original collector',responsible_people:[' Pat  Doe ','Alex','pat doe']};
+  const result=await mutate('transfer_collections',payload);
+  let s=await snapshot(); let saved=s.debts.find(x=>x.id===result.id);
+  assert.equal(saved.current_balance_cents,7500); assert.deepEqual(saved.responsible_people,['Pat Doe','Alex']);
+  const h=s.debt_history.find(x=>x.debt_id===result.id);
+  assert.deepEqual(h.details.previous_responsible_people,[]); assert.deepEqual(h.details.responsible_people,['Pat Doe','Alex']); assert.equal(h.details.source_entry_id,e.id);
+  const replay=await mutate('transfer_collections',{...payload,id:randomUUID(),collector:'Different collector',responsible_people:['Changed on retry']});
+  assert.deepEqual(replay,{id:result.id,replayed:true});
+  assert.deepEqual((await snapshot()).debts.find(x=>x.id===result.id),saved);
+  await mutate('save_debt',{...saved,responsible_people:['Updated assignment']});
+  const beforeRetry=await snapshot(); await mutate('transfer_collections',payload); await mutate('transfer_collections',{entry_id:e.id});
+  assert.deepEqual(await snapshot(),beforeRetry);
+  await mutate('remove_payment',{id:payment.id}); s=await snapshot(); saved=s.debts.find(x=>x.id===result.id);
+  assert.equal(saved.current_balance_cents,10000); assert.deepEqual(saved.responsible_people,['Updated assignment']);
+  assert.equal(s.debts.filter(x=>x.source_entry_id===e.id).length,1);
+});
+
+test('payment plan collections transfer assigns one shared debt without duplicating installments or balances', async () => {
+  const p=plan(); await mutate('save_plan',p);
+  const children=(await snapshot()).entries.filter(e=>e.plan_id===p.id);
+  await mutate('record_payment',{id:randomUUID(),entry_id:children[0].id,amount_cents:1000,paid_on:'2026-01-15'});
+  const payload={id:randomUUID(),plan_id:p.id,responsible_people:['Morgan','Jordan']};
+  const result=await mutate('transfer_collections',payload);
+  const s=await snapshot(); const saved=s.debts.find(d=>d.id===result.id);
+  assert.equal(saved.current_balance_cents,8001); assert.equal(saved.original_balance_cents,8001);
+  assert.deepEqual(saved.responsible_people,['Morgan','Jordan']);
+  assert.equal(s.debts.filter(d=>d.source_plan_id===p.id).length,1);
+  assert.equal(s.plans.find(x=>x.id===p.id).status,'collections');
+  assert.equal(s.entries.filter(e=>e.plan_id===p.id).length,children.length);
+  assert.ok(s.entries.filter(e=>e.plan_id===p.id).every(e=>e.status==='collections'));
+  assert.deepEqual(s.debt_history.find(h=>h.debt_id===result.id).details.responsible_people,['Morgan','Jordan']);
+  assert.deepEqual(await mutate('transfer_collections',{...payload,responsible_people:[]}),{id:result.id,replayed:true});
+  assert.deepEqual(await snapshot(),s);
+});
+
+test('invalid household assignments and conflicting collection IDs roll back the entire source transfer', async () => {
+  const e=entry(), p=plan(); await mutate('save_entry',e); await mutate('save_plan',p);
+  const before=await snapshot();
+  await denied(()=>mutate('transfer_collections',{entry_id:e.id,responsible_people:['Name\nInvalid']},owner,false));
+  await denied(()=>mutate('transfer_collections',{plan_id:p.id,responsible_people:[null]},owner,false));
+  assert.deepEqual(await snapshot(),before);
+  const occupied=debt({responsible_people:['Original person']}); await mutate('save_debt',occupied);
+  const beforeConflict=await snapshot();
+  await denied(()=>mutate('transfer_collections',{id:occupied.id,entry_id:e.id,responsible_people:['Different person']}),'23505');
+  assert.deepEqual(await snapshot(),beforeConflict);
+});
+
+test('household labels never grant access or let another approved owner alter debts or source transfers', async () => {
+  const d=debt({responsible_people:['Other owner','Family member']}); await mutate('save_debt',d);
+  const e=entry(),p=plan(); await mutate('save_entry',e); await mutate('save_plan',p);
+  const before=await snapshot();
+  await denied(()=>mutate('save_debt',{...d,responsible_people:['Hijacked']},secondOwner),'23505');
+  await denied(()=>mutate('transfer_collections',{entry_id:e.id,responsible_people:['Other owner']},secondOwner),'P0002');
+  await denied(()=>mutate('transfer_collections',{plan_id:p.id,responsible_people:['Other owner']},secondOwner),'P0002');
+  assert.deepEqual(await snapshot(),before);
+  const theirs=await snapshot(secondOwner);
+  assert.equal(theirs.debts.some(x=>x.id===d.id),false); assert.equal(theirs.debt_history.some(x=>x.debt_id===d.id),false);
+  for(const actor of [support,banned,unverified]) await denied(()=>mutate('save_debt',debt({responsible_people:['Family member']}),actor),'42501');
+  for(const role of ['anon','authenticated']) {
+    assert.equal((await one("select has_function_privilege($1,'public.finance_responsible_people(jsonb)','EXECUTE') granted",[role])).granted,false);
+    assert.equal((await one("select has_table_privilege($1,'public.finance_debts','SELECT,INSERT,UPDATE,DELETE') granted",[role])).granted,false);
+  }
+});
+
+test('household migration is repeatable with assignments, shared collections and private grants intact', async () => {
+  const before=await snapshot(); await db.exec(householdMigration); assert.deepEqual(await snapshot(),before);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,13);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
+  assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
 });

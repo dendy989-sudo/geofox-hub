@@ -1,4 +1,5 @@
 import { normalizeVendorUrl } from "./vendors.ts";
+import { normalizeResponsiblePeople } from "./debt-people.ts";
 import { BILL_PAYMENT_METHODS, INCOME_PAYMENT_METHODS } from "./types.ts";
 
 /** Input checks are shared by the API and tests; never trust client ownership fields. */
@@ -57,6 +58,12 @@ function vendorLink(p: Record<string, unknown>): Record<string, unknown> {
 }
 function accountLink(p: Record<string, unknown>): Record<string, unknown> {
   return p.account_id === undefined ? {} : { account_id: p.account_id === null ? null : uuid(p.account_id, "Account") };
+}
+function debtPeople(p: Record<string, unknown>): Record<string, unknown> {
+  if (p.responsible_people === undefined) return {}; // Older forms preserve the existing assignment.
+  if (!Array.isArray(p.responsible_people)) return fail("Choose household names as a list, or leave the list empty.");
+  try { return { responsible_people: normalizeResponsiblePeople(p.responsible_people) }; }
+  catch (error) { return fail(error instanceof Error ? error.message : "Enter valid household names."); }
 }
 function forecastFields(p: Record<string, unknown>, kind: "bill" | "income"): Record<string, unknown> {
   const fields = accountLink(p);
@@ -190,12 +197,12 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
       const added = financeDate(p.date_added, "Date added");
       const removed = financeDate(p.date_removed, "Date removed", true);
       if (added && removed && removed < added) return fail("Date removed must be on or after date added.");
-      result = { id: optionalId(), stage: choice(p.stage, ["credit_report", "collections"], "debt location"), title: text(p.title, "Debt name"), original_creditor: text(p.original_creditor, "Original creditor", 200), collector: text(p.collector, "Collector", 200, false), original_balance_cents: cents(p.original_balance_cents, "Original balance"), current_balance_cents: balance, status, date_added: added, date_removed: removed, settlement_offer_cents: cents(p.settlement_offer_cents, "Settlement offer", 0, true), offer_monthly_cents: cents(p.offer_monthly_cents, "Monthly offer", 0, true), offer_expires_on: financeDate(p.offer_expires_on, "Offer expiration", true), notes: text(p.notes, "Notes", 4000, false), change_note: text(p.change_note, "Change note", 1000, false) }; break;
+      result = { id: optionalId(), stage: choice(p.stage, ["credit_report", "collections"], "debt location"), title: text(p.title, "Debt name"), original_creditor: text(p.original_creditor, "Original creditor", 200), collector: text(p.collector, "Collector", 200, false), original_balance_cents: cents(p.original_balance_cents, "Original balance"), current_balance_cents: balance, status, date_added: added, date_removed: removed, settlement_offer_cents: cents(p.settlement_offer_cents, "Settlement offer", 0, true), offer_monthly_cents: cents(p.offer_monthly_cents, "Monthly offer", 0, true), offer_expires_on: financeDate(p.offer_expires_on, "Offer expiration", true), notes: text(p.notes, "Notes", 4000, false), change_note: text(p.change_note, "Change note", 1000, false), ...debtPeople(p) }; break;
     }
     case "transfer_collections": {
       const entry = uuid(p.entry_id, "Bill", true), plan = uuid(p.plan_id, "Plan", true);
       if (Boolean(entry) === Boolean(plan)) return fail("Choose either a bill or a payment plan to transfer.");
-      result = { id: optionalId(), entry_id: entry, plan_id: plan, collector: text(p.collector, "Collector", 200, false), notes: text(p.notes, "Notes", 4000, false) }; break;
+      result = { id: optionalId(), entry_id: entry, plan_id: plan, collector: text(p.collector, "Collector", 200, false), notes: text(p.notes, "Notes", 4000, false), ...debtPeople(p) }; break;
     }
     case "save_month":
       result = { month: financeMonth(p.month), opening_balance_cents: cents(p.opening_balance_cents, "Opening balance", -MAX_CENTS) }; break;

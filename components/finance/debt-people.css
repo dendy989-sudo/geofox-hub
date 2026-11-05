@@ -1,0 +1,48 @@
+.finance-root .fdp-field{min-width:0;margin:0;padding:15px 16px 16px;border:1px solid #e5dff2;border-radius:10px;background:#fbfaff}
+.finance-root .fdp-field legend{padding:0 5px;color:#665780;font-size:12px;font-weight:600}
+.finance-root .fdp-optional{margin-left:5px;color:#9a8fa7;font-size:10px;font-weight:400}
+.finance-root .fdp-help{margin:1px 0 14px;font-size:11px;line-height:1.65;color:#81758f}
+.finance-root .fdp-selected-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:10px;line-height:1.6;color:#92849f;margin-bottom:8px}
+.finance-root .fdp-selected-heading strong{color:#7a6a8f;font-weight:550}
+.finance-root .fdp-selected-heading>span{font-variant-numeric:tabular-nums}
+.finance-root .fdp-chips{list-style:none;display:flex;flex-wrap:wrap;align-items:flex-start;gap:7px;padding:0;margin:0 0 14px;min-width:0}
+.finance-root .fdp-chips>li{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;padding:3px 3px 3px 9px;border:1px solid #dfd5ee;border-radius:7px;background:#f2ecfa;color:#7a639c;font-size:11px;line-height:1.5}
+.finance-root .fdp-chips>li>svg{flex:none}
+.finance-root .fdp-chips>li>span{min-width:0;overflow-wrap:anywhere}
+.finance-root .fdp-chips button{display:grid;place-items:center;border:0;padding:0;min-width:28px;min-height:28px;flex:none;border-radius:5px;background:transparent;color:#9979b8;cursor:pointer}
+.finance-root .fdp-chips button:hover{background:#e8dcf3;color:#765393}
+.finance-root .fdp-unassigned{font-size:10px;line-height:1.6;color:#a394b1;margin:0 0 14px;padding:8px 10px;border:1px dashed #e4dbed;border-radius:6px}
+.finance-root .fdp-add-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:9px}
+.finance-root .fdp-add-row>.fn-button{min-height:40px;white-space:nowrap}
+.finance-root .fdp-add-row input[aria-invalid="true"]{border-color:#d593a3}
+.finance-root .fdp-entry-help{font-size:10px;line-height:1.65;color:#9c8daa;margin:8px 0 0}
+.finance-root .fdp-suggestions{margin-top:14px;font-size:10px;color:#9c8aac}
+.finance-root .fdp-suggestions>span{display:block;margin-bottom:7px}
+.finance-root .fdp-suggestions>div{display:flex;align-items:flex-start;flex-wrap:wrap;gap:6px}
+.finance-root .fdp-suggestions button{display:inline-flex;align-items:center;gap:5px;max-width:100%;min-width:0;min-height:30px;padding:5px 8px;border:1px solid #e8e1f1;border-radius:6px;background:#fff;color:#88749b;font:inherit;font-size:10px;line-height:1.6;cursor:pointer}
+.finance-root .fdp-suggestions button>svg{flex:none}
+.finance-root .fdp-suggestions button>span{overflow-wrap:anywhere;min-width:0;text-align:left}
+.finance-root .fdp-suggestions button:hover{border-color:#c9b6e1;background:#f5effb;color:#71518f}
+.finance-root .fdp-suggestions>small{display:block;margin-top:7px;line-height:1.5}
+.finance-root .fdp-chips button:focus-visible,.finance-root .fdp-suggestions button:focus-visible{outline:2px solid #a48bcf;outline-offset:3px}
+.finance-root .fdp-field:disabled{opacity:.75}
+.finance-root .fdp-field button:disabled{cursor:default}
+.finance-root .fdp-error{display:flex;align-items:flex-start;gap:7px;margin:12px 0 0;padding:9px 10px;background:#fff1f4;border:1px solid #eed2da;border-radius:6px;color:#af5e74;font-size:11px;line-height:1.6}
+.finance-root .fdp-error>svg{flex:none;margin-top:1px}
+.finance-root .fdp-history{display:flex;align-items:flex-start;gap:6px;margin-top:3px;color:#8b769c;min-width:0}
+.finance-root .fdp-history>svg{flex:none;margin-top:2px}
+.finance-root .fdp-history p{margin:0!important;color:#8b769c;font-size:10px!important;line-height:1.65;overflow-wrap:anywhere}
+.finance-root .fdp-history p>strong{font-size:10px!important;font-weight:550}
+.finance-root .fdp-history p>span{color:inherit;font-size:inherit}
+.finance-root .fdp-sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(max-width:520px){
+  .finance-root .fdp-field{padding:12px}
+  .finance-root .fdp-add-row{gap:7px}
+  .finance-root .fdp-add-row>.fn-button{padding:8px 10px}
+  .finance-root .fdp-chips button{min-width:32px;min-height:32px}
+  .finance-root .fdp-suggestions button{min-height:34px}
+}
+@media(max-width:360px){
+  .finance-root .fdp-add-row{grid-template-columns:minmax(0,1fr)}
+  .finance-root .fdp-add-row>.fn-button{justify-self:start}
+}
