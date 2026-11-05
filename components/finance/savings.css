@@ -1,0 +1,135 @@
+.finance-root .fs-workspace{min-width:0}
+.finance-root .fs-intro p{margin:4px 0 0;font-size:11px;line-height:1.7}
+.finance-root .fs-section-head{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:15px;flex-wrap:wrap}
+.finance-root .fs-section-head h2{font-size:15px;margin:0 0 6px;color:#45536e}
+.finance-root .fs-section-head p{font-size:11px;color:#8791a6;line-height:1.6;margin:0}
+.finance-root .fs-account-grid,.finance-root .fs-goal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}
+.finance-root .fs-account-card{padding:20px;min-width:0}
+.finance-root .fs-account-head,.finance-root .fs-goal-head{display:flex;align-items:center;gap:11px;min-width:0}
+.finance-root .fs-account-head>div,.finance-root .fs-goal-head>div{min-width:0;flex:1}
+.finance-root .fs-account-head h3,.finance-root .fs-goal-head h3{margin:0 0 5px;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.finance-root .fs-account-head p,.finance-root .fs-goal-head p{font-size:10px;color:#8d98ac;margin:0;line-height:1.6;overflow-wrap:anywhere}
+.finance-root .fs-account-icon,.finance-root .fs-goal-icon{width:38px;height:38px;flex:none;display:grid;place-items:center;border-radius:10px;background:#edf8f4;color:#67a48e;border:1px solid #dceee6}
+.finance-root .fs-goal-icon{background:#f3effb;color:#927cc6;border-color:#e9e1f5}
+.finance-root .fs-account-head>.fn-badge,.finance-root .fs-goal-head>.fn-badge{font-size:9px;flex:none}
+.finance-root .fs-account-balance{display:grid;gap:6px;margin:20px 0 17px}
+.finance-root .fs-account-balance>span{font-size:10px;color:#8b98a7}
+.finance-root .fs-account-balance>strong{font-size:27px;font-weight:600;letter-spacing:-.65px;color:#477d69;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.finance-root .fs-account-allocation{display:grid;gap:11px;padding:13px 15px;background:#f8fbfa;border:1px solid #e8f0ec;border-radius:9px;margin:0}
+.finance-root .fs-account-allocation>div{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0}
+.finance-root .fs-account-allocation dt{font-size:10px;color:#819589;line-height:1.6}
+.finance-root .fs-account-allocation dd{font-size:13px;font-weight:600;margin:0;color:#607d70;overflow-wrap:anywhere;text-align:right;min-width:0}
+.finance-root .fs-account-card.overallocated{border-color:#eacbd4}
+.finance-root .fs-account-card.overallocated .fs-account-allocation{background:#fff8fa;border-color:#f2e0e5}
+.finance-root .fs-account-help,.finance-root .fs-goal-help{font-size:10px;line-height:1.7;color:#8a94a8;margin:13px 0}
+.finance-root .fs-account-actions{gap:7px;margin-top:15px}
+.finance-root .fs-account-actions .fn-button{min-height:32px}
+.finance-root .fs-notice,.finance-root .fs-error{display:flex;align-items:flex-start;gap:10px;padding:14px 16px;border:1px solid #e5def4;border-radius:9px;background:#f8f6fe;color:#807198;font-size:11px;line-height:1.7}
+.finance-root .fs-notice>svg,.finance-root .fs-error>svg{flex:none;margin-top:2px}
+.finance-root .fs-notice strong{font-weight:600}
+.finance-root .fs-notice p{margin:5px 0 0}
+.finance-root .fs-notice.warning{background:#fff8f0;border-color:#f2dfc9;color:#a27c54}
+.finance-root .fs-error{background:#fff4f7;border-color:#f1d2dc;color:#b55d75}
+.finance-root .fs-goal-form{display:grid;gap:17px}
+.finance-root .fs-fieldset{padding:0;margin:0;border:0;min-width:0}
+.finance-root .fs-fieldset:disabled{opacity:.78}
+.finance-root .fs-optional{font-weight:400;font-size:10px;color:#97a0b2;margin-left:3px}
+.finance-root .fs-allocation-budget{border:1px solid #e4ede8;background:#f6faf8;border-radius:9px;padding:14px 16px;display:grid;gap:10px}
+.finance-root .fs-allocation-budget>div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:11px;color:#7d9385}
+.finance-root .fs-allocation-budget strong{font-weight:600;color:#5b7d68;overflow-wrap:anywhere;text-align:right;min-width:0}
+.finance-root .fs-allocation-budget .fs-budget-total{border-top:1px solid #dfe9e3;padding-top:11px;margin-top:1px}
+.finance-root .fs-allocation-budget .fs-budget-total strong{font-size:15px}
+.finance-root .fs-allocation-budget>p{font-size:10px;line-height:1.7;margin:1px 0 0;color:#8a9a90}
+.finance-root .fs-allocation-budget.overallocated{border-color:#edcfd8;background:#fff8fa}
+.finance-root .fs-allocation-budget.overallocated>p{color:#aa647a}
+.finance-root .fs-goal-preview{padding:3px 0}
+.finance-root .fs-goal-preview>p{font-size:10px;line-height:1.7;color:#9a90a7;margin:9px 0 0}
+.finance-root .fs-goal-card{min-width:0}
+.finance-root .fs-goal-card.funded{border-color:#cee7db}
+.finance-root .fs-goal-card.funded .fs-goal-icon{background:#e9f7ef;color:#69a484;border-color:#d7ecdf}
+.finance-root .fs-goal-card.archived{background:#fcfcfe}
+.finance-root .fs-goal-card.archived .fs-goal-head h3{color:#8992a5}
+.finance-root .fs-goal-head{padding:19px 20px;border-bottom:1px solid #edf0f7;align-items:flex-start}
+.finance-root .fs-goal-body{padding:19px 20px}
+.finance-root .fs-goal-amounts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:17px}
+.finance-root .fs-goal-amounts>div{display:grid;gap:6px;min-width:0}
+.finance-root .fs-goal-amounts>div:last-child{text-align:right}
+.finance-root .fs-goal-amounts span{font-size:10px;color:#939caf;line-height:1.6}
+.finance-root .fs-goal-amounts strong{font-size:21px;font-weight:600;letter-spacing:-.45px;color:#69738c;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;line-height:1.4}
+.finance-root .fs-goal-amounts>div:first-child strong{color:#8a72b9}
+.finance-root .fs-goal-card.funded .fs-goal-amounts>div:first-child strong{color:#679a80}
+.finance-root .fs-goal-dates{display:flex;justify-content:space-between;flex-wrap:wrap;gap:7px;margin-top:10px;color:#9a8fa8;font-size:10px;line-height:1.6}
+.finance-root .fs-milestone-caption{display:flex;align-items:center;justify-content:space-between;gap:9px;margin-top:20px;font-size:10px;color:#9a91aa;line-height:1.6}
+.finance-root .fs-milestone-caption strong{font-weight:550;color:#8d819f}
+.finance-root .fs-milestones{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));list-style:none;padding:0;margin:10px 0 0;gap:8px}
+.finance-root .fs-milestones>li{display:flex;align-items:center;justify-content:center;gap:5px;padding:8px 4px;border:1px solid #eae6f0;border-radius:7px;background:#fbfafe;color:#b2a8bf;font-size:10px;min-width:0}
+.finance-root .fs-milestone-dot{display:grid;place-items:center;flex:none;width:17px;height:17px;border-radius:50%;border:1px solid #e3dceb;color:#b7a7c9}
+.finance-root .fs-milestone-dot>span{width:4px;height:4px;border-radius:50%;background:#d9d0e4}
+.finance-root .fs-milestones>li.reached{background:#f0f8f3;border-color:#dceee2;color:#729b80}
+.finance-root .fs-milestones>li.reached .fs-milestone-dot{background:#83b597;color:white;border-color:#83b597}
+.finance-root .fs-goal-notes{font-size:11px;color:#929aab;line-height:1.7;margin:15px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.finance-root .fs-goal-actions{gap:7px;margin-top:16px}
+.finance-root .fs-goal-history{border-top:1px solid #edeaf2}
+.finance-root .fs-goal-history>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 20px;font-size:10px;color:#9686aa;background:#fcfbfe;list-style:none;cursor:pointer}
+.finance-root .fs-goal-history>summary::-webkit-details-marker{display:none}
+.finance-root .fs-goal-history>summary>span{display:flex;align-items:center;gap:7px}
+.finance-root .fs-goal-history>summary>span:last-child{font-size:9px;white-space:nowrap}
+.finance-root .fs-goal-history[open]>summary{border-bottom:1px solid #edeaf2}
+.finance-root .fs-goal-history[open]>summary>span:last-child>svg{transform:rotate(180deg)}
+.finance-root .fs-history-list{padding:0 20px;max-height:300px;overflow:auto;scrollbar-width:thin}
+.finance-root .fs-history-row{display:flex;align-items:flex-start;justify-content:space-between;gap:13px;padding:13px 0;border-bottom:1px solid #eff0f5}
+.finance-root .fs-history-row:last-child{border-bottom:0}
+.finance-root .fs-history-row>div{min-width:0}
+.finance-root .fs-history-row strong{font-size:11px;font-weight:550;color:#8d7a9e;overflow-wrap:anywhere}
+.finance-root .fs-history-row p{font-size:10px;color:#939aac;margin:5px 0 0;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.finance-root .fs-history-row time{font-size:9px;line-height:1.7;color:#a4a6b4;text-align:right;max-width:125px;flex:none}
+.finance-root .fs-archive-confirm{border:1px solid #e8daec;border-radius:8px;background:#fcf7fd;padding:12px 13px;margin-top:13px}
+.finance-root .fs-archive-confirm>p{font-size:10px;line-height:1.7;color:#9e789e;margin:0 0 10px}
+.finance-root .fs-toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 16px}
+.finance-root .fs-search{display:flex;align-items:center;position:relative;min-width:0;flex:1;max-width:370px}
+.finance-root .fs-search>svg{position:absolute;left:12px;color:#9b9bad;pointer-events:none}
+.finance-root .fs-search input{width:100%;min-width:0;min-height:39px;padding:9px 12px 9px 35px;border:1px solid #e2e5ef;border-radius:8px;background:white;font:inherit;font-size:11px;color:#7a8098}
+.finance-root .fs-goal-filter select{max-width:100%;min-height:39px;padding:8px 30px 8px 11px;border:1px solid #e2e5ef;border-radius:8px;background:white;font:inherit;font-size:11px;color:#7a8098}
+.finance-root .fs-result-count{margin-left:auto;font-size:10px;color:#9a9fb0}
+.finance-root .fs-search input:focus,.finance-root .fs-goal-filter select:focus{outline:2px solid #c8b5e9;outline-offset:1px}
+.finance-root .fs-goal-history>summary:focus-visible{outline:2px solid #bea8e1;outline-offset:-3px}
+.finance-root .fs-sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.finance-root .fs-footer{margin:0 2px}
+@media(max-width:1000px){
+  .finance-root .fs-goal-head{flex-wrap:wrap}
+  .finance-root .fs-goal-head>.fn-badge{margin-left:49px}
+}
+@media(max-width:800px){
+  .finance-root .fs-account-grid,.finance-root .fs-goal-grid{grid-template-columns:minmax(0,1fr)}
+  .finance-root .fs-goal-head{flex-wrap:nowrap}
+  .finance-root .fs-goal-head>.fn-badge{margin-left:0}
+}
+@media(max-width:520px){
+  .finance-root .fs-account-card{padding:17px}
+  .finance-root .fs-goal-head,.finance-root .fs-goal-body{padding:17px}
+  .finance-root .fs-account-head,.finance-root .fs-goal-head{flex-wrap:wrap}
+  .finance-root .fs-account-head>.fn-badge,.finance-root .fs-goal-head>.fn-badge{margin-left:49px}
+  .finance-root .fs-section-head{align-items:flex-start}
+  .finance-root .fs-section-head>.fn-button,.finance-root .fs-section-head>.fn-actions{width:100%}
+  .finance-root .fs-section-head>.fn-actions>.fn-button{flex:1}
+  .finance-root .fs-account-actions{align-items:stretch}
+  .finance-root .fs-account-actions>.fn-button{flex:1;justify-content:center}
+  .finance-root .fs-account-balance>strong{font-size:25px}
+  .finance-root .fs-goal-amounts strong{font-size:19px}
+  .finance-root .fs-milestones{gap:5px}
+  .finance-root .fs-milestones>li{gap:4px;font-size:9px}
+  .finance-root .fs-toolbar{gap:9px}
+  .finance-root .fs-search{flex-basis:100%;max-width:none}
+  .finance-root .fs-goal-filter{min-width:0;flex:1}
+  .finance-root .fs-goal-filter select{width:100%}
+  .finance-root .fs-history-row{flex-wrap:wrap;gap:6px}
+  .finance-root .fs-history-row time{text-align:left;max-width:none;flex-basis:100%}
+  .finance-root .fs-goal-history>summary{padding:13px 17px}
+}
+@media print{
+  .finance-root .fs-account-actions,.finance-root .fs-goal-actions,.finance-root .fs-toolbar,.finance-root .fs-no-print,.finance-root .fs-archive-confirm{display:none!important}
+  .finance-root .fs-account-card,.finance-root .fs-goal-card{break-inside:avoid;box-shadow:none!important}
+  .finance-root .fs-account-grid,.finance-root .fs-goal-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .finance-root .fs-history-list{max-height:none;overflow:visible}
+  .finance-root .fs-section-head{break-after:avoid}
+}

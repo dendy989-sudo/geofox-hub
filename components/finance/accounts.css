@@ -1,0 +1,16 @@
+.fa-fields { margin:0; padding:0; border:0; min-width:0; }
+.fa-account-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; padding:20px; }
+.fa-account { min-width:0; border:1px solid var(--fn-line); border-radius:11px; padding:19px; background:linear-gradient(160deg,#fff,#faf9ff); }
+.fa-account h3 { font-size:15px; color:#43516b; line-height:1.5; margin:17px 0 3px; overflow-wrap:anywhere; }
+.fa-account p { margin:4px 0 12px; }
+.fa-balance { display:block; font-size:28px; letter-spacing:-.8px; margin:16px 0 1px; }
+.fa-forecast { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin:16px 0; padding-top:12px; border-top:1px solid var(--fn-line); font-size:10px; color:#7d88a0; }
+.fa-account .fn-badge { white-space:normal; }
+.fa-account .fn-actions { margin-top:16px; }
+.fn-account-filter { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:-4px 0 22px; }
+.fn-account-filter label { display:flex; align-items:center; gap:9px; color:#61708a; font-size:11px; min-width:0; }
+.fn-account-filter select { max-width:320px; width:auto; }
+.fn-account-filter p { margin:0; }
+@media(max-width:1300px) { .fa-account-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:700px) { .fa-account-grid { grid-template-columns:1fr; padding:16px; } .fn-account-filter label { width:100%; flex-wrap:wrap; } .fn-account-filter select { flex:1; min-width:0; max-width:none; } }
+@media print { .fa-account-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .fa-account { break-inside:avoid; } }

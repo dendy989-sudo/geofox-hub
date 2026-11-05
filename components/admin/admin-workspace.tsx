@@ -7,6 +7,7 @@ import { AppBadge, Empty, ErrorBanner, label, Loading, type PanelProps, useHubDa
 import { CustomersPanel } from "./customers";
 import { ErrorsPanel } from "./errors";
 import { GeofoxMark, Icon, type IconName } from "./icons";
+import { trapMobileMenuFocus } from "./mobile-menu-focus";
 import { ModerationPanel } from "./moderation";
 import { OperationsPanel } from "./operations";
 import { OverviewPanel } from "./overview";
@@ -14,6 +15,7 @@ import { SettingsPanel } from "./settings";
 import { TicketsPanel } from "./tickets";
 import "@/app/admin/admin.css";
 import "@/components/workspace/workspace.css";
+import "@/components/workspace/responsive-print.css";
 
 const TasksPanel = dynamic(() => import("@/components/workspace/tasks").then((module) => module.TasksPanel), { loading: () => <Loading /> });
 const MarketingPanel = dynamic(() => import("@/components/workspace/marketing").then((module) => module.MarketingPanel), { loading: () => <Loading /> });
@@ -127,9 +129,13 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
   }, [toast]);
   useEffect(() => {
     if (!menuOpen) return;
-    const handler = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpen(false); };
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = "hidden";
+    document.getElementById("hub-sidebar")?.querySelector<HTMLButtonElement>(".hub-mobile-close")?.focus();
+    const handler = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpen(false); else trapMobileMenuFocus(event, "hub-sidebar"); };
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    return () => { window.removeEventListener("keydown", handler); document.body.style.overflow = previousOverflow; if (previousFocus?.isConnected) previousFocus.focus(); };
   }, [menuOpen]);
 
   function openArea(area: Area, tab = navigation[area][0].id) {
@@ -200,9 +206,9 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
       </div> : null)}
       <div className="hub-sidebar-bottom"><div className="hub-side-note"><div className="hub-note-icon"><Icon name="layers" size={18} /></div><strong>{areaNotes[activeArea].title}</strong><p>{areaNotes[activeArea].text}</p></div><button className="hub-profile hub-profile-link" type="button" onClick={() => openArea("profile")}><span className="hub-avatar">{initials || "G"}</span><span className="hub-profile-name"><strong title={displayName}>{displayName}</strong><span>{preview ? "Interface preview" : label(bootstrap.data?.staff.role)}</span></span><Icon name="chevron" size={13} /></button></div>
     </aside>
-    <div className="hub-main">
-      <header className="hub-topbar"><button type="button" className="hub-icon-button hub-menu-button" aria-label="Open workspace navigation" aria-expanded={menuOpen} aria-controls="hub-sidebar" onClick={() => setMenuOpen(true)}><Icon name="menu" size={19} /></button><div className="hub-breadcrumb"><span>{label(activeArea)}</span><Icon name="chevron" size={12} style={{ transform: "rotate(-90deg)" }} /><strong>{current?.label || "Workspace"}</strong></div><div className="hub-topbar-actions">{activeArea !== "profile" ? <div className="hub-scope"><Icon name={currentApp === "all" || currentApp === "company" ? "layers" : "book"} size={15} /><label htmlFor="workspace-app">Workspace scope</label><select id="workspace-app" aria-label="Workspace scope" value={currentApp} onChange={(event) => setApp(event.target.value)} disabled={!ready}><option value="all">{companyScopeAllowed ? "Company & all apps" : "All apps"}</option>{companyScopeAllowed ? <option value="company">Geofox company</option> : null}{apps.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select></div> : null}<button className="hub-icon-button" type="button" aria-label="Refresh workspace data" title="Refresh workspace data" disabled={bootstrap.loading} onClick={() => { if (preview) setToast("Sign in to view saved workspace data."); else setRefreshKey((key) => key + 1); }}><Icon name="refresh" size={15} /></button><a href="/" className="hub-icon-button" aria-label="Open Geofox website" title="Geofox website"><Icon name="external" size={15} /></a></div></header>
-      <main id="hub-content" className="hub-content" tabIndex={-1}>
+    <div className="hub-main" inert={menuOpen}>
+      <header className="hub-topbar"><button type="button" className="hub-icon-button hub-menu-button" aria-label="Open workspace navigation" aria-expanded={menuOpen} aria-controls="hub-sidebar" onClick={() => setMenuOpen(true)}><Icon name="menu" size={19} /></button><div className="hub-breadcrumb"><span>{label(activeArea)}</span><Icon name="chevron" size={12} style={{ transform: "rotate(-90deg)" }} /><strong>{current?.label || "Workspace"}</strong></div><div className="hub-topbar-actions">{activeArea !== "profile" ? <div className="hub-scope"><Icon name={currentApp === "all" || currentApp === "company" ? "layers" : "book"} size={15} /><label htmlFor="workspace-app">Workspace scope</label><select id="workspace-app" aria-label="Workspace scope" value={currentApp} onChange={(event) => setApp(event.target.value)} disabled={!ready}><option value="all">{companyScopeAllowed ? "Company & all apps" : "All apps"}</option>{companyScopeAllowed ? <option value="company">Geofox company</option> : null}{apps.map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select></div> : null}<button className="hub-icon-button" type="button" aria-label="Print this page" title="Print this page" onClick={() => window.print()}><Icon name="printer" size={15} /></button><button className="hub-icon-button" type="button" aria-label="Refresh workspace data" title="Refresh workspace data" disabled={bootstrap.loading} onClick={() => { if (preview) setToast("Sign in to view saved workspace data."); else setRefreshKey((key) => key + 1); }}><Icon name="refresh" size={15} /></button><a href="/" className="hub-icon-button" aria-label="Open Geofox website" title="Geofox website"><Icon name="external" size={15} /></a></div></header>
+      <main id="hub-content" className="hub-content" tabIndex={-1}><div className="hub-print-context">Geofox Hub · {label(activeArea)} · {current?.label || "Workspace"} · {currentApp === "all" ? "All permitted records" : currentApp === "company" ? "Geofox company" : apps.find(item => item.slug === currentApp)?.name || currentApp}</div>
         {preview ? <div className="hub-banner"><Icon name="info" size={20} /><div><strong>Your company, together in one place.</strong><p>Interface preview · sign in to use your saved tasks, content, compliance records, and books.</p></div><div className="hub-banner-actions"><a href="/admin/login" className="hub-button small">Staff sign-in <Icon name="arrow" size={13} /></a></div></div> : null}
         {!preview && Boolean(bootstrap.data?.setupIssues.length) && activeArea === "admin" && current?.id !== "settings" ? <div className="hub-banner warning"><Icon name="info" size={19} /><div><strong>A few connections still need attention</strong><p>{bootstrap.data?.setupIssues[0]}</p>{can("settings:write") ? <button className="hub-section-link" style={{ marginTop: 6 }} onClick={() => navigate("settings")}>Review connection setup <Icon name="arrow" size={12} /></button> : null}</div></div> : null}
         {currentApp !== "all" && activeArea !== "profile" ? <div className="hub-current-app">{currentApp === "company" ? <span className="hub-app-badge"><Icon name="layers" size={12} />Geofox company</span> : <AppBadge slug={currentApp} apps={apps} />}<span>{currentApp === "company" ? "Company records across your business" : "Records and totals scoped to this app"}</span></div> : null}

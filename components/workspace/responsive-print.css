@@ -1,0 +1,84 @@
+/* Shared by every Hub and Finance view, including dynamically loaded panels. */
+.hub-main, .hub-content, .hub-topbar, .hub-topbar-actions, .hub-breadcrumb { min-width:0; }
+.hub-content > *, .ws-stack > *, .wf-stack > *, .fn-stack > * { min-width:0; }
+.hub-table-scroll, .hub-table-wrap, .ws-calendar-scroll, .mkt-calendar-scroll, .fn-table-wrap, .fn-calendar-scroll { position:relative; max-width:100%; overscroll-behavior-x:contain; }
+.hub-table-wrap { overflow-x:auto; }
+.hub-card-head, .hub-page-heading, .ws-calendar-head, .fn-panel-head { flex-wrap:wrap; }
+.hub-card-head > div, .hub-page-heading > div, .fn-panel-head > div { min-width:0; }
+.hub-content h1, .hub-content h2, .hub-content h3, .fn-dialog h2, .hub-modal h2 { overflow-wrap:anywhere; }
+.hub-root input, .hub-root select, .hub-root textarea { max-width:100%; min-width:0; }
+.hub-root .hub-sidebar { overscroll-behavior:contain; padding-bottom:max(20px,env(safe-area-inset-bottom)); }
+.hub-print-context, .fn-print-context { display:none; }
+@media(max-width:850px) {
+  .hub-company-root .hub-sidebar { max-width:calc(100vw - var(--hub-rail-width)); }
+  .hub-root .hub-topbar { flex-wrap:wrap; }
+  .hub-root .hub-topbar-actions { flex:1; min-width:0; justify-content:flex-end; }
+  .hub-root .hub-scope { min-width:0; max-width:100%; flex:1; }
+  .hub-root .hub-scope select { width:100%; max-width:none; min-width:0; }
+  .hub-root .hub-icon-button { flex-shrink:0; }
+  .hub-root .hub-modal { max-height:calc(100dvh - 24px); overflow:auto; }
+  .hub-root .hub-sidebar-backdrop { touch-action:none; }
+  .hub-services, .hub-customer-facts, .hub-error-grid { min-width:0; }
+}
+@media(max-width:600px) {
+  .hub-root .hub-page-heading { gap:14px; }
+  .hub-root .hub-controls { flex-wrap:wrap; min-width:0; }
+  .hub-root .hub-filter-search { min-width:0; flex-basis:100%; max-width:none; }
+  .hub-root .hub-select { min-width:0; max-width:100%; }
+  .ws-row, .ws-calendar-head, .wf-list-item { flex-wrap:wrap; }
+  .ws-file-list li { flex-wrap:wrap; }
+  .ws-file-name { min-width:0; flex:1; }
+  .ws-file-list li > small { margin-left:0; }
+  .hub-company-root .hub-topbar { gap:8px; }
+  .hub-root .hub-topbar-actions { gap:5px; }
+  .hub-root .hub-scope { padding:8px 5px; }
+  .hub-root .hub-scope select { font-size:12px; }
+  .hub-root .hub-icon-button, .hub-root .fn-icon-button { min-width:38px; min-height:38px; }
+  .hub-root .hub-button, .hub-root .fn-button, .hub-root .fn-tab, .hub-root .ws-filter { min-height:40px; }
+  .hub-root .hub-nav-button { min-height:44px; }
+  .hub-root .hub-modal input, .hub-root .hub-modal select, .hub-root .hub-modal textarea,
+  .hub-root .fn-dialog input, .hub-root .fn-dialog select, .hub-root .fn-dialog textarea { font-size:16px!important; }
+  .hub-root .hub-toast, .hub-root .fn-toast { bottom:max(12px,env(safe-area-inset-bottom)); overflow-wrap:anywhere; }
+  .hub-root .hub-breadcrumb { overflow-wrap:anywhere; }
+  .hub-root .hub-service-note, .hub-root .ws-help, .hub-root .wf-help { overflow-wrap:anywhere; }
+}
+@media(max-width:380px) {
+  .hub-root .hub-services, .hub-root .hub-customer-facts { grid-template-columns:minmax(0,1fr); }
+  .hub-root .hub-service { border-right:0; border-bottom:1px solid var(--hub-line); }
+  .hub-root .hub-metric-value { font-size:25px; }
+}
+@media print {
+  @page { size:landscape; margin:12mm; }
+  html, body { background:#fff!important; color:#17223a!important; overflow:visible!important; }
+  .hub-root { min-height:0!important; background:#fff!important; font-size:10pt; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+  .hub-root .hub-area-rail, .hub-root .hub-sidebar, .hub-root .hub-sidebar-backdrop, .hub-root .hub-topbar,
+  .hub-root .hub-skip-link, .hub-root .hub-toast, .hub-root .fn-toast, .hub-root .fn-confetti,
+  .hub-root .hub-modal-overlay, .hub-root .hub-modal-backdrop, .hub-root dialog,
+  .hub-no-print, .fn-no-print { display:none!important; }
+  .hub-root .hub-main { margin:0!important; min-height:0!important; width:100%!important; }
+  .hub-root .hub-content { max-width:none!important; width:100%!important; padding:0!important; }
+  .hub-print-context, .fn-print-context { display:block!important; margin-bottom:14pt; padding-bottom:8pt; border-bottom:1px solid #cbd2df; color:#34415b; font-size:10pt; }
+  .hub-root .hub-button, .hub-root .hub-icon-button, .hub-root .hub-table-action, .hub-root .hub-section-link,
+  .hub-root .ws-actions, .hub-root .wf-actions, .hub-root .ws-toolbar > button { display:none!important; }
+  .hub-root .hub-card, .hub-root .fn-panel, .hub-root .ws-calendar { overflow:visible!important; box-shadow:none!important; }
+  .hub-root .hub-table-scroll, .hub-root .hub-provider-history-scroll, .hub-root .ws-calendar-scroll,
+  .hub-root .hub-table-wrap, .hub-root .mkt-calendar-scroll, .hub-root .fn-table-wrap, .hub-root .fn-calendar-scroll { overflow:visible!important; max-height:none!important; }
+  .hub-root table { width:100%!important; min-width:0!important; font-size:8pt!important; }
+  .hub-root thead { display:table-header-group; }
+  .hub-root th, .hub-root td { padding:6pt!important; overflow-wrap:anywhere; white-space:normal!important; }
+  .hub-root tr, .hub-root .hub-metric, .hub-root .ws-task, .hub-root .wf-source { break-inside:avoid; }
+  .hub-root h1, .hub-root h2, .hub-root h3, .hub-root .hub-card-head, .hub-root .fn-panel-head { break-after:avoid; }
+  .hub-root .hub-metrics-grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:10pt; }
+  .hub-root .hub-metric-value { font-size:23pt; }
+  .hub-root .hub-chart, .hub-root .fn-chart { max-height:none; break-inside:avoid; }
+  .hub-root .hub-chart svg, .hub-root .fn-chart svg { max-height:65mm; }
+  .hub-root .mkt-calendar { min-width:0!important; }
+  .hub-root .mkt-calendar-post strong { white-space:normal; overflow:visible; }
+  .hub-root .mkt-draft-strip { flex-wrap:wrap; overflow:visible; }
+  .hub-root .ws-calendar-grid { min-width:0!important; }
+  .hub-root .ws-calendar-day { min-height:70pt; }
+  .hub-root .ws-calendar-item { white-space:normal; overflow:visible; }
+  .hub-root input, .hub-root select { box-shadow:none; background:transparent; }
+  .hub-root a { color:inherit!important; text-decoration:none; }
+  .hub-root .hub-footer-note { margin-top:16pt; font-size:8pt; }
+}

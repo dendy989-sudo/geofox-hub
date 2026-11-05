@@ -5,7 +5,7 @@ import { financeId } from "@/lib/finance/id";
 import { useRef, useState, type FormEvent } from "react";
 import { Icon } from "@/components/admin/icons";
 import { isMoved, monthDays, paidAmount, parseMoney, remainingAmount } from "@/lib/finance/calculations";
-import { FINANCE_CATEGORIES, FREQUENCY_LABELS, INCOME_CATEGORIES, type CustomRepeatMode, type EntryKind, type ExpenseType, type FinanceData, type FinanceDebt, type FinanceEntry, type FinanceMutate, type FinancePlan, type Frequency } from "@/lib/finance/types";
+import { ACCOUNT_KIND_LABELS, BILL_PAYMENT_METHODS, FINANCE_CATEGORIES, FREQUENCY_LABELS, INCOME_CATEGORIES, INCOME_PAYMENT_METHODS, PAYMENT_METHOD_LABELS, type CustomRepeatMode, type EntryKind, type ExpenseType, type FinanceAccountScope, type FinanceData, type FinanceDebt, type FinanceEntry, type FinanceMutate, type FinancePlan, type Frequency, type PaymentMethod } from "@/lib/finance/types";
 import { normalizeVendorUrl, vendorForEntry, vendorWebsiteUrl } from "@/lib/finance/vendors";
 import { FinanceDialog, Money, formatDate, formatMoney } from "./shared";
 import "./records.css";
@@ -16,6 +16,7 @@ interface EditorBase {
   today: string;
   mutate: FinanceMutate;
   onClose: () => void;
+  accountScope?: FinanceAccountScope;
 }
 
 function useFormAction() {
@@ -50,6 +51,33 @@ function AmountInput({ label, value, onChange, hint, required = true, disabled =
 
 function NotesInput({ value, onChange, label = "Notes", hint, maxLength = 4000 }: { value: string; onChange: (value: string) => void; label?: string; hint?: string; maxLength?: number }) {
   return <label className="fn-field full"><span>{label} <span className="fr-optional">optional</span></span><textarea rows={3} maxLength={maxLength} value={value} onChange={event => onChange(event.target.value)} placeholder="Anything you want to remember…" />{hint && <small>{hint}</small>}</label>;
+}
+
+function accountLabel(data: FinanceData, accountId?: string | null): string {
+  if (!accountId) return "Unassigned";
+  const account = (data.accounts ?? []).find(item => item.id === accountId && item.user_id === data.user.id);
+  return account ? `${account.name}${account.last_four ? ` · ••${account.last_four}` : ""}` : "Saved account";
+}
+
+function newAccountDefault(data: FinanceData, scope?: FinanceAccountScope): string | null {
+  return (data.accounts ?? []).find(account => account.id === scope && account.user_id === data.user.id && !account.archived_at)?.id ?? null;
+}
+
+function AccountMethodFields({ data, kind, accountId, setAccountId, method, setMethod, originalAccountId, reminderDays, setReminderDays, help, actual = false }: {
+  data: FinanceData; kind: EntryKind; accountId: string | null; setAccountId: (id: string | null) => void;
+  method: PaymentMethod; setMethod: (method: PaymentMethod) => void; originalAccountId?: string | null;
+  reminderDays?: number | null; setReminderDays?: (days: number | null) => void; help?: string; actual?: boolean;
+}) {
+  const accounts = (data.accounts ?? []).filter(account => account.user_id === data.user.id && (!account.archived_at || account.id === originalAccountId)).sort((a, b) => a.name.localeCompare(b.name));
+  const methods = kind === "income" ? INCOME_PAYMENT_METHODS : BILL_PAYMENT_METHODS;
+  const reminderOptions = [0, 1, 3, 7, 14];
+  if (reminderDays !== null && reminderDays !== undefined && !reminderOptions.includes(reminderDays)) reminderOptions.push(reminderDays);
+  reminderOptions.sort((a, b) => a - b);
+  return <>
+    <label className="fn-field"><span>{actual ? kind === "income" ? "Received into account" : "Paid from account" : kind === "income" ? "Deposit account" : "Bank / card account"} <span className="fr-optional">optional</span></span><select value={accountId ?? ""} onChange={event => setAccountId(event.target.value || null)}><option value="">Unassigned</option>{accountId && !accounts.some(account => account.id === accountId) ? <option value={accountId}>Saved account</option> : null}{accounts.map(account => <option value={account.id} key={account.id}>{account.name} · {ACCOUNT_KIND_LABELS[account.kind]}{account.last_four ? ` · ••${account.last_four}` : ""}{account.archived_at ? " · Archived" : ""}</option>)}</select><small>{help ?? (actual ? "This records the account used for this transaction. It does not change the bill or income’s default account." : "Choose a saved account, or leave unassigned. Add accounts under Banks & cards using a nickname and last four digits only.")}</small></label>
+    <label className="fn-field"><span>{kind === "income" ? "Income method" : "Payment method"}</span><select value={method} onChange={event => setMethod(event.target.value as PaymentMethod)}>{methods.map(value => <option value={value} key={value}>{PAYMENT_METHOD_LABELS[value]}</option>)}</select><small>{method === "autopay" ? "Autopay is a label. Record the payment after it posts; Finance does not send or automatically record it." : actual ? "Saved with this payment or receipt, even if you change the entry’s default later." : "Describes how this money is paid or received. It does not move money."}</small></label>
+    {kind === "bill" && setReminderDays ? <label className="fn-field full"><span>Bill reminder</span><select value={reminderDays === null || reminderDays === undefined ? "off" : String(reminderDays)} onChange={event => setReminderDays(event.target.value === "off" ? null : Number(event.target.value))}><option value="off">Off</option>{reminderOptions.map(days => <option value={days} key={days}>{days === 0 ? "On the planned payment date" : `${days} ${days === 1 ? "day" : "days"} before`}</option>)}</select><small>Remind me in Finance before the planned payment date. Original due dates stay visible when moved.</small></label> : null}
+  </>;
 }
 
 type VendorPayload = { vendor_id: string | null; new_vendor?: never } | { vendor_id?: never; new_vendor: { id: string; name: string; url: string | null } };
@@ -97,7 +125,7 @@ function validCustomDate(value: string): boolean {
 const moneyText = (cents: number) => (cents / 100).toFixed(2);
 const initialDate = (month: string, today: string) => today.startsWith(month) ? today : `${month}-01`;
 
-export function EntryEditor({ data, month, today, mutate, onClose, entry: initialEntry, kind: initialKind = "bill", date, initial, onSaved }: EditorBase & { entry?: FinanceEntry; kind?: EntryKind; date?: string; initial?: { title?: string; amount_cents?: number }; onSaved?: () => void }) {
+export function EntryEditor({ data, month, today, mutate, onClose, accountScope, entry: initialEntry, kind: initialKind = "bill", date, initial, onSaved }: EditorBase & { entry?: FinanceEntry; kind?: EntryKind; date?: string; initial?: { title?: string; amount_cents?: number; account_id?: string | null }; onSaved?: () => void }) {
   const entry = initialEntry ? data.entries.find(item => item.id === initialEntry.id) ?? initialEntry : undefined;
   const kind = entry?.kind ?? initialKind;
   const income = kind === "income";
@@ -105,6 +133,9 @@ export function EntryEditor({ data, month, today, mutate, onClose, entry: initia
   const [amount, setAmount] = useState(entry ? moneyText(entry.amount_cents) : initial?.amount_cents !== undefined ? moneyText(initial.amount_cents) : "");
   const [category, setCategory] = useState(entry?.category ?? (income ? "Paycheck" : "Home"));
   const [expenseType, setExpenseType] = useState<ExpenseType>(entry?.expense_type ?? "bill");
+  const [accountId, setAccountId] = useState<string | null>(() => entry ? entry.account_id ?? null : initial && Object.hasOwn(initial, "account_id") ? initial.account_id ?? null : newAccountDefault(data, accountScope));
+  const [method, setMethod] = useState<PaymentMethod>(entry?.payment_method ?? "manual");
+  const [reminderDays, setReminderDays] = useState<number | null>(income ? null : entry ? entry.reminder_days ?? null : 3);
   const [originalDue, setOriginalDue] = useState(entry?.original_due_date ?? date ?? initialDate(month, today));
   const [scheduledDate, setScheduledDate] = useState(entry?.scheduled_date ?? date ?? initialDate(month, today));
   const [frequency, setFrequency] = useState<Frequency | "once">("once");
@@ -167,6 +198,7 @@ export function EntryEditor({ data, month, today, mutate, onClose, entry: initia
       id: id.current, kind, title: title.trim(), category, expense_type: income ? "bill" : expenseType,
       amount_cents: cents, original_due_date: entry?.original_due_date ?? originalDue,
       scheduled_date: scheduledDate, notes: notes.trim(),
+      account_id: accountId, payment_method: method, reminder_days: income ? null : reminderDays,
       ...(!entry ? { frequency, end_date: frequency === "once" ? null : endDate || null,
         ...(frequency === "custom" ? { custom_mode: customMode, custom_month_days: customMode === "month_days" ? customMonthDays : [], custom_dates: customMode === "specific_dates" ? dates : [] } : {}) } : {}),
       ...vendorPayload,
@@ -183,6 +215,7 @@ export function EntryEditor({ data, month, today, mutate, onClose, entry: initia
           <AmountInput label={income ? "Expected amount" : "Bill amount"} value={amount} onChange={setAmount} hint={entry && entry.original_amount_cents !== parseMoney(amount) ? `Originally ${formatMoney(entry.original_amount_cents)}. Your original monthly obligation stays visible.` : undefined} />
           <label className="fn-field"><span>Category</span><select value={category} onChange={event => setCategory(event.target.value)}>{!categories.some(item => item === category) && <option value={category}>{category}</option>}{categories.map(item => <option key={item}>{item}</option>)}</select></label>
           <VendorFields data={data} vendor={vendor} help={entry?.series_id ? "Changing the vendor here updates this occurrence only. Other repeats keep their original vendor." : undefined} />
+          <AccountMethodFields data={data} kind={kind} accountId={accountId} setAccountId={setAccountId} originalAccountId={entry?.account_id} method={method} setMethod={setMethod} reminderDays={reminderDays} setReminderDays={setReminderDays} help={entry?.series_id ? "This changes the account for this occurrence only. Other repeats and recorded payment accounts stay unchanged." : entry?.plan_id ? "This changes this installment’s account. Recorded payment accounts stay unchanged." : undefined} />
           {!income && <label className="fn-field full"><span>Expense type</span><select value={expenseType} onChange={event => setExpenseType(event.target.value as ExpenseType)} disabled={Boolean(entry?.plan_id)}><option value="bill">Regular bill</option><option value="installment">Installment</option><option value="payment_plan">Payment plan</option></select>{!entry?.plan_id && expenseType !== "bill" && <small>This labels this bill. To generate and track a complete payment schedule, add a plan on the Payments page.</small>}</label>}
           <label className="fn-field"><span>{income ? "Original expected date" : "Original due date"}</span><input type="date" value={originalDue} min="2000-01-01" max="2100-12-31" disabled={Boolean(entry)} required onChange={event => changeOriginalDate(event.target.value)} /><small>{entry ? "Kept for your records, even when the planned date changes." : "The date this amount is originally due."}</small></label>
           <label className="fn-field"><span>{income ? "Planned receipt date" : "Planned payment date"}</span><input type="date" value={scheduledDate} onChange={event => setScheduledDate(event.target.value)} required /><small>{scheduledDate !== originalDue ? "Moved · original date remains unchanged." : "Move this date when you need to plan for another day."}</small></label>
@@ -200,7 +233,7 @@ export function EntryEditor({ data, month, today, mutate, onClose, entry: initia
     </form>
     {entry && <div className="fr-editor-section">
       <div className="fn-row"><h3>{income ? "Receipt history" : "Payment history"}</h3><strong><Money cents={paid} /> {income ? "received" : "paid"}</strong></div>
-      {receipts.length ? <div className="fr-history">{receipts.map(payment => <div className={`fr-history-item${payment.reversed_at ? " reversed" : ""}`} key={payment.id}><div><strong><Money cents={payment.amount_cents} /></strong><span>{formatDate(payment.paid_on)}{payment.reversed_at ? " · Reversed" : ""}</span>{payment.note && <p>{payment.note}</p>}</div>{!payment.reversed_at && (reversal === payment.id ? <div className="fr-inline-confirm"><p>Reverse this record? Its amount will become outstanding again.</p><div className="fn-actions"><button className="fn-button small" type="button" disabled={action.pending} onClick={() => setReversal(null)}>Keep record</button><button className="fn-button small danger" type="button" disabled={action.pending} onClick={() => { void action.run(() => mutate("remove_payment", { id: payment.id }), () => setReversal(null)); }}>Reverse</button></div></div> : <button className="fn-button small subtle" type="button" disabled={action.pending} onClick={() => setReversal(payment.id)}>Reverse</button>)}</div>)}</div> : <p className="fn-muted fr-small">No {income ? "receipts" : "payments"} recorded yet. Use “{income ? "Record receipt" : "Record payment"}” on the list to record full or partial amounts.</p>}
+      {receipts.length ? <div className="fr-history">{receipts.map(payment => <div className={`fr-history-item${payment.reversed_at ? " reversed" : ""}`} key={payment.id}><div><strong><Money cents={payment.amount_cents} /></strong><span>{formatDate(payment.paid_on)}{payment.reversed_at ? " · Reversed" : ""}</span><span className="fr-payment-meta">{accountLabel(data, payment.account_id)} · {PAYMENT_METHOD_LABELS[payment.payment_method ?? "manual"]}</span>{payment.note && <p>{payment.note}</p>}</div>{!payment.reversed_at && (reversal === payment.id ? <div className="fr-inline-confirm"><p>Reverse this record? Its amount will become outstanding again.</p><div className="fn-actions"><button className="fn-button small" type="button" disabled={action.pending} onClick={() => setReversal(null)}>Keep record</button><button className="fn-button small danger" type="button" disabled={action.pending} onClick={() => { void action.run(() => mutate("remove_payment", { id: payment.id }), () => setReversal(null)); }}>Reverse</button></div></div> : <button className="fn-button small subtle" type="button" disabled={action.pending} onClick={() => setReversal(payment.id)}>Reverse</button>)}</div>)}</div> : <p className="fn-muted fr-small">No {income ? "receipts" : "payments"} recorded yet. Use “{income ? "Record receipt" : "Record payment"}” on the list to record full or partial amounts.</p>}
     </div>}
     {series && <div className="fr-editor-section"><div className="fn-row"><div><h3>Recurring {income ? "income" : "bill"}</h3><p className="fn-muted fr-small">{FREQUENCY_LABELS[series.frequency]} · {series.active ? "Repeats are active" : "Repeats are paused"}{series.end_date ? ` · Ends ${formatDate(series.end_date)}` : ""}</p></div><button className="fn-button small" type="button" disabled={action.pending} onClick={() => { void action.run(() => mutate("save_series", { id: series.id, active: !series.active })); }}>{series.active ? "Pause repeats" : "Resume repeats"}</button></div>
       {series.frequency === "custom" && <div className="fr-series-pattern">{series.custom_mode === "month_days" ? <><strong>Every month on days {series.custom_month_days.join(", ")}</strong><p>Starts {formatDate(series.start_date)}. Days 29–31 use the last available day in shorter months, with one occurrence per date.</p></> : <details className="fr-series-dates"><summary><span>{series.custom_dates.length} selected calendar {series.custom_dates.length === 1 ? "date" : "dates"}</span><span>View schedule <Icon name="chevron" size={12} /></span></summary><ul className="fr-date-chips" aria-label="Saved custom schedule">{series.custom_dates.map(item => <li key={item}><span>{formatDate(item)}</span>{item === series.start_date ? <small>First</small> : null}</li>)}</ul></details>}<small>The repeating pattern is kept as created. This editor changes one occurrence.</small></div>}
@@ -218,6 +251,8 @@ export function PaymentEditor({ data, today, mutate, onClose, entry: initialEntr
   const [amount, setAmount] = useState(moneyText(remaining));
   const [paidOn, setPaidOn] = useState(today);
   const [note, setNote] = useState("");
+  const [accountId, setAccountId] = useState<string | null>(entry.account_id ?? null);
+  const [method, setMethod] = useState<PaymentMethod>(entry.payment_method ?? "manual");
   const id = useRef("");
   const action = useFormAction();
   const close = () => { if (!action.pending) onClose(); };
@@ -229,11 +264,11 @@ export function PaymentEditor({ data, today, mutate, onClose, entry: initialEntr
     if (paidOn > today) return action.setError(`Record money ${income ? "received" : "paid"} today or earlier. To plan a future date, move the record instead.`);
     if (entry.status !== "active") return action.setError("Restore this record to active before recording a payment.");
     id.current ||= financeId();
-    void action.run(() => mutate("record_payment", { id: id.current, entry_id: entry.id, amount_cents: cents, paid_on: paidOn, note: note.trim() }), onClose);
+    void action.run(() => mutate("record_payment", { id: id.current, entry_id: entry.id, amount_cents: cents, paid_on: paidOn, note: note.trim(), account_id: accountId, payment_method: method }), onClose);
   }
   return <FinanceDialog title={income ? "Record income received" : "Record a payment"} onClose={close}><form onSubmit={submit} className="fn-stack fr-editor-form"><div className="fr-entry-summary"><span>{entry.title}</span><strong><Money cents={remaining} /></strong><small>{income ? "Still expected" : "Still to pay"} · Original {income ? "date" : "due"} {formatDate(entry.original_due_date)}{vendor ? ` · ${vendor.name}` : ""}</small></div><p className="fr-form-intro">{income ? "Record the amount that actually arrived. Partial receipts leave the rest in your forecast." : "Record what you actually paid. Partial payments reduce the remaining balance and keep the bill open until it is fully paid."}</p>
     {website && vendor && <div className="fr-vendor-payment"><div><strong>{vendor.name}</strong><p>{income ? "Open the saved company website if needed. Record your receipt here when the money arrives." : "Pay on the company’s website, then record the payment here. Opening this link does not mark the bill paid."}</p></div><a className="fn-button small" href={website} target="_blank" rel="noopener noreferrer"><Icon name="external" size={13} />{income ? "Open website" : "Open payment website"}<span className="fr-sr-only"> for {vendor.name} in a new tab</span></a></div>}
-    <fieldset className="fr-fieldset" disabled={action.pending}><div className="fn-fields"><AmountInput label={income ? "Amount received" : "Amount paid"} value={amount} onChange={setAmount} /><label className="fn-field"><span>{income ? "Received on" : "Paid on"}</span><input autoFocus type="date" required max={today} value={paidOn} onChange={event => setPaidOn(event.target.value)} /></label><NotesInput value={note} onChange={setNote} label="Payment note" maxLength={1000} /></div></fieldset>{parseMoney(amount) !== null && parseMoney(amount)! > 0 && parseMoney(amount)! < remaining && <div className="fr-info"><Icon name="info" size={17} /><span>Partial {income ? "receipt" : "payment"}: <Money cents={remaining - parseMoney(amount)!} /> will remain {income ? "expected" : "outstanding"}.</span></div>}<FormError message={action.error} /><div className="fn-actions end"><button className="fn-button" type="button" onClick={close} disabled={action.pending}>Cancel</button><button className="fn-button primary" type="submit" disabled={action.pending || remaining <= 0}>{action.pending ? "Recording…" : income ? "Record receipt" : "Record payment"}</button></div></form></FinanceDialog>;
+    <fieldset className="fr-fieldset" disabled={action.pending}><div className="fn-fields"><AmountInput label={income ? "Amount received" : "Amount paid"} value={amount} onChange={setAmount} /><label className="fn-field"><span>{income ? "Received on" : "Paid on"}</span><input autoFocus type="date" required max={today} value={paidOn} onChange={event => setPaidOn(event.target.value)} /></label><AccountMethodFields data={data} kind={entry.kind} accountId={accountId} setAccountId={setAccountId} originalAccountId={entry.account_id} method={method} setMethod={setMethod} actual /><NotesInput value={note} onChange={setNote} label="Payment note" maxLength={1000} /></div></fieldset>{parseMoney(amount) !== null && parseMoney(amount)! > 0 && parseMoney(amount)! < remaining && <div className="fr-info"><Icon name="info" size={17} /><span>Partial {income ? "receipt" : "payment"}: <Money cents={remaining - parseMoney(amount)!} /> will remain {income ? "expected" : "outstanding"}.</span></div>}<FormError message={action.error} /><div className="fn-actions end"><button className="fn-button" type="button" onClick={close} disabled={action.pending}>Cancel</button><button className="fn-button primary" type="submit" disabled={action.pending || remaining <= 0}>{action.pending ? "Recording…" : income ? "Record receipt" : "Record payment"}</button></div></form></FinanceDialog>;
 }
 
 export function MoveEditor({ data, mutate, onClose, entry: initialEntry }: EditorBase & { entry: FinanceEntry }) {
@@ -249,11 +284,14 @@ export function MoveEditor({ data, mutate, onClose, entry: initialEntry }: Edito
   return <FinanceDialog title={`Move ${entry.kind === "income" ? "income" : "bill"}`} onClose={close}><form className="fn-stack fr-editor-form" onSubmit={submit}><div className="fr-entry-summary"><span>{entry.title}</span><strong><Money cents={remainingAmount(entry, data.payments)} /></strong><small>Original {entry.kind === "income" ? "expected date" : "due date"} · {formatDate(entry.original_due_date)}</small></div><div className="fr-info"><Icon name="calendar" size={17} /><span>Only the planned date changes. Your original monthly obligation and overdue status stay visible across the app. A planned move does not change an agreement with your creditor.</span></div><fieldset className="fr-fieldset" disabled={action.pending}><div className="fn-fields"><label className="fn-field full"><span>New planned {entry.kind === "income" ? "receipt" : "payment"} date</span><input autoFocus type="date" required value={date} onChange={event => setDate(event.target.value)} /><small>Currently planned for {formatDate(entry.scheduled_date)}{isMoved(entry) ? " · Already moved" : ""}.</small></label><NotesInput value={note} onChange={setNote} label="Reason for moving" maxLength={1000} /></div></fieldset><FormError message={action.error} /><div className="fn-actions end">{date !== entry.original_due_date && <button className="fn-button subtle" type="button" disabled={action.pending} onClick={() => setDate(entry.original_due_date)}>Use original date</button>}<button className="fn-button" type="button" onClick={close} disabled={action.pending}>Cancel</button><button className="fn-button primary" type="submit" disabled={action.pending}>{action.pending ? "Moving…" : "Save planned date"}</button></div></form></FinanceDialog>;
 }
 
-export function PlanEditor({ data, month, today, mutate, onClose, plan }: EditorBase & { plan?: FinancePlan }) {
+export function PlanEditor({ data, month, today, mutate, onClose, accountScope, plan }: EditorBase & { plan?: FinancePlan }) {
   const [title, setTitle] = useState(plan?.title ?? "");
   const [creditor, setCreditor] = useState(plan?.creditor ?? "");
   const [kind, setKind] = useState<FinancePlan["kind"]>(plan?.kind ?? "installment");
   const [category, setCategory] = useState(plan?.category ?? "Debt payments");
+  const [accountId, setAccountId] = useState<string | null>(() => plan ? plan.account_id ?? null : newAccountDefault(data, accountScope));
+  const [method, setMethod] = useState<PaymentMethod>(plan?.payment_method ?? "manual");
+  const [reminderDays, setReminderDays] = useState<number | null>(plan ? plan.reminder_days ?? null : 3);
   const [total, setTotal] = useState(plan ? moneyText(plan.total_amount_cents) : "");
   const [openingPaid, setOpeningPaid] = useState(plan ? moneyText(plan.opening_paid_cents) : "0.00");
   const [installment, setInstallment] = useState(plan ? moneyText(plan.installment_amount_cents) : "");
@@ -277,16 +315,17 @@ export function PlanEditor({ data, month, today, mutate, onClose, plan }: Editor
     try { vendorPayload = vendor.payload(); }
     catch (cause) { return action.setError(cause instanceof Error ? cause.message : "Check the vendor name and website."); }
     id.current ||= financeId();
-    void action.run(() => mutate("save_plan", { id: id.current, title: title.trim(), creditor: creditor.trim(), kind, category, total_amount_cents: cents, opening_paid_cents: prior, installment_amount_cents: each, frequency, first_due_date: firstDate, notes: notes.trim(), ...vendorPayload }), onClose);
+    void action.run(() => mutate("save_plan", { id: id.current, title: title.trim(), creditor: creditor.trim(), kind, category, total_amount_cents: cents, opening_paid_cents: prior, installment_amount_cents: each, frequency, first_due_date: firstDate, notes: notes.trim(), account_id: accountId, payment_method: method, reminder_days: reminderDays, ...vendorPayload }), onClose);
   }
   return <FinanceDialog title={plan ? "Manage payment plan" : "Add a payment plan"} onClose={close}>
     <form className="fn-stack fr-editor-form" onSubmit={submit}>
       <p className="fr-form-intro">Create an installment schedule once. Each payment appears as a bill across your calendar, Live Money, and monthly totals. Record or move individual payments as life changes.</p>
-      {plan && <div className="fr-info"><Icon name="info" size={17} /><span>Your original amounts and frequency stay intact. Edit the name, company, vendor, or notes here. Record payments or move individual dates in the schedule.</span></div>}
+      {plan && <div className="fr-info"><Icon name="info" size={17} /><span>Your original amounts and frequency stay intact. Edit the plan details and payment defaults here. Record payments or move individual dates in the schedule.</span></div>}
       <fieldset className="fr-fieldset" disabled={action.pending}><div className="fn-fields">
         <label className="fn-field"><span>Plan name</span><input autoFocus required maxLength={160} value={title} onChange={event => setTitle(event.target.value)} placeholder="e.g. Car repair installments" /></label>
         <label className="fn-field"><span>Company / creditor</span><input required maxLength={160} value={creditor} onChange={event => setCreditor(event.target.value)} placeholder="Who you pay" /></label>
         <VendorFields data={data} vendor={vendor} help={plan ? "Changing this vendor updates every installment in the plan, including its recorded payment history." : "Attach a saved company and payment website to every installment in this plan."} />
+        <AccountMethodFields data={data} kind="bill" accountId={accountId} setAccountId={setAccountId} originalAccountId={plan?.account_id} method={method} setMethod={setMethod} reminderDays={reminderDays} setReminderDays={setReminderDays} help={plan ? "Changing the account, method, or reminder updates active unpaid installments, including archived ones. Paid, cancelled, and transferred installments keep their defaults. Recorded payments keep their original account and method. Leaving a default unchanged preserves individual overrides." : "Use these defaults for the plan’s installments. You can override an individual installment later."} />
         <label className="fn-field"><span>Plan type</span><select value={kind} disabled={Boolean(plan)} onChange={event => setKind(event.target.value as FinancePlan["kind"])}><option value="installment">Installments</option><option value="payment_plan">Payment plan</option></select></label>
         <label className="fn-field"><span>Category</span><select value={category} disabled={Boolean(plan)} onChange={event => setCategory(event.target.value)}>{!FINANCE_CATEGORIES.some(item => item === category) && <option>{category}</option>}{FINANCE_CATEGORIES.map(item => <option key={item}>{item}</option>)}</select></label>
         <AmountInput label="Total agreed amount" value={total} onChange={setTotal} disabled={Boolean(plan)} hint="Include any agreed interest or fees in this total." />

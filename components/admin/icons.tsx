@@ -1,8 +1,12 @@
 import type { CSSProperties } from "react";
 
-export type IconName = "grid" | "users" | "ticket" | "pulse" | "shield" | "checklist" | "settings" | "arrow" | "search" | "refresh" | "copy" | "check" | "close" | "chevron" | "external" | "book" | "coins" | "calendar" | "clock" | "info" | "alert" | "bolt" | "logout" | "menu" | "send" | "download" | "lock" | "layers" | "globe" | "megaphone" | "chart" | "profile" | "wallet" | "scales" | "plus" | "edit" | "trash" | "image" | "upload" | "columns" | "message";
+export type IconName = "grid" | "users" | "ticket" | "pulse" | "shield" | "checklist" | "settings" | "arrow" | "search" | "refresh" | "copy" | "check" | "close" | "chevron" | "external" | "book" | "coins" | "calendar" | "clock" | "info" | "alert" | "bolt" | "logout" | "menu" | "send" | "download" | "lock" | "layers" | "globe" | "megaphone" | "chart" | "profile" | "wallet" | "scales" | "plus" | "edit" | "trash" | "image" | "upload" | "columns" | "message" | "card" | "bell" | "target" | "printer";
 
 const paths: Record<IconName, React.ReactNode> = {
+  card: <><rect x="2" y="4" width="20" height="16" rx="3" /><path d="M2 9h20M6 15h3m4 0h2" /></>,
+  bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
+  target: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1" /></>,
+  printer: <><path d="M6 9V3h12v6M6 17H3v-7h18v7h-3M6 14h12v7H6v-7Zm11-2h.1" /></>,
   message: <path d="M21 11a8 8 0 0 1-8 8H8l-6 3 2-6a8 8 0 0 1-1-5 9 9 0 0 1 18 0Z" />,
   megaphone: <><path d="M4 9h4l11-5v16L8 15H4V9Zm4 6 2 6h4l-2-4M22 9v6" /></>,
   chart: <><path d="M3 3v18h18M7 16v-4m5 4V8m5 8V5" /></>,
