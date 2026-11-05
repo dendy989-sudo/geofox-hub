@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  dailyLedger, dayInMonth, debtSummary, entryState, isMoved, isPastDue, monthDays,
+  dailyLedger, dayInMonth, daysPastDue, debtSummary, entryState, isMoved, isPastDue, monthDays,
   accountTrackingStart, actualAccountBalance, matchesAccountScope, monthOpening, monthSummary, paidAmount, parseMoney, planProgress, remainingAmount, shiftMonth,
 } from "../lib/finance/calculations.ts";
 
@@ -57,6 +57,40 @@ function on(ledger, date) {
   assert.ok(day, `Expected ledger date ${date}`);
   return day;
 }
+
+test("overdue days use the original due date through moves, partial payments, and archive", () => {
+  const bill = entry("late", { original_due_date: "2026-11-01", scheduled_date: "2027-01-01", archived_at: timestamp });
+  const payments = [payment("partial", bill.id, 3000, "2026-11-02")];
+  assert.equal(daysPastDue(bill, payments, "2026-11-05"), 4);
+  assert.equal(daysPastDue(bill, payments, "2026-11-01"), 0);
+  assert.equal(daysPastDue(bill, payments, "2026-10-31"), 0);
+  assert.equal(daysPastDue({ ...bill, scheduled_date: "2026-11-20" }, payments, "2026-11-05"), 4);
+  assert.equal(daysPastDue({ ...bill, kind: "income" }, payments, "2026-11-05"), 4, "An overdue expected receipt uses the same date arithmetic");
+});
+
+test("overdue days stop for fully paid or inactive items and return when an actual payment is reversed", () => {
+  const bill = entry("late", { original_due_date: "2026-11-01" });
+  const full = payment("full", bill.id, bill.amount_cents, "2026-11-02");
+  assert.equal(daysPastDue(bill, [full], "2026-11-05"), 0);
+  assert.equal(daysPastDue(bill, [{ ...full, reversed_at: timestamp }], "2026-11-05"), 4);
+  assert.equal(daysPastDue(bill, [{ ...full, user_id: "foreign" }], "2026-11-05"), 4);
+  for (const status of ["cancelled", "collections"]) assert.equal(daysPastDue({ ...bill, status }, [], "2026-11-05"), 0);
+});
+
+test("overdue counts are whole calendar days across leap years, year changes, and daylight-saving boundaries", () => {
+  for (const [original, today, expected] of [
+    ["2028-02-28", "2028-03-01", 2], ["2028-02-29", "2028-03-01", 1],
+    ["2027-02-28", "2027-03-01", 1], ["2000-02-28", "2000-03-01", 2], ["2100-02-28", "2100-03-01", 1],
+    ["2026-12-31", "2027-01-01", 1], ["2026-03-07", "2026-03-10", 3], ["2026-10-31", "2026-11-03", 3],
+  ]) assert.equal(daysPastDue(entry("day", { original_due_date: original }), [], today), expected, `${original} to ${today}`);
+});
+
+test("invalid cached date strings cannot produce NaN or fractional overdue labels", () => {
+  for (const date of ["", "2026-02-29", "2026-11-00", "2026-13-01", "2026-11-05T00:00:00Z"]) {
+    assert.equal(daysPastDue(entry("bad", { original_due_date: date }), [], "2026-11-15"), 0);
+    assert.equal(daysPastDue(entry("valid"), [], date), 0);
+  }
+});
 
 function account(id, overrides = {}) {
   return { id, user_id: "owner", name: id, institution: "Bank", kind: "checking", last_four: null, opening_date: "2026-11-01", opening_balance_cents: 100000, credit_limit_cents: null, notes: "", archived_at: null, created_at: timestamp, updated_at: timestamp, ...overrides };
