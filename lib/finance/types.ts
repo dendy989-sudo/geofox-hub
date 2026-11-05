@@ -71,11 +71,13 @@ export interface FinanceDebt {
   date_added: string; date_removed: string | null; settlement_offer_cents: number | null;
   offer_monthly_cents: number | null; offer_expires_on: string | null;
   source_entry_id: string | null; source_plan_id: string | null;
+  responsible_people: string[];
   notes: string; created_at: string; updated_at: string;
 }
 export interface FinanceDebtHistory {
   id: string; user_id: string; debt_id: string; previous_balance_cents: number | null;
   balance_cents: number; note: string; created_at: string;
+  details?: { previous_responsible_people?: string[] | null; responsible_people?: string[]; [key: string]: unknown };
 }
 export interface FinanceSpending {
   id: string; user_id: string; date: string; title: string; amount_cents: number; created_at: string;

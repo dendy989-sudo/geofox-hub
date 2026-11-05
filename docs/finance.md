@@ -16,12 +16,13 @@ Apply the finance migrations after the existing Hub migrations, in this order:
 2. [20261105170745_finance_access_service_readonly.sql](../supabase/migrations/20261105170745_finance_access_service_readonly.sql) removes inherited Supabase default privileges and grants `service_role` only `SELECT` on `finance_access`. Allowlist changes are administered through database migrations, not app writes.
 3. [20261105175613_finance_custom_dates_vendors.sql](../supabase/migrations/20261105175613_finance_custom_dates_vendors.sql) adds custom repeating schedules, reusable vendors, optional vendor links on entries/series/plans, and the corresponding private API operations.
 4. [20261105184742_finance_accounts_balances_goals.sql](../supabase/migrations/20261105184742_finance_accounts_balances_goals.sql) adds bank/card accounts, dated balance updates, transfers, savings goals/history, account attribution, payment methods, and bill-reminder settings. Existing records and payments remain Unassigned; methods default to Manual. Existing bills receive a three-day reminder unless subsequently changed.
+5. [20261105201038_finance_debt_household_people.sql](../supabase/migrations/20261105201038_finance_debt_household_people.sql) adds optional household names to credit and collection records, validates them, and keeps assignment changes in debt history. Existing debts begin with no names; balances, dates, status, offers, and prior history remain unchanged.
 
 Both `/finance` and `/api/finance` enforce owner access. Requests use the server-verified user ID, and database functions recheck the allowlist and ownership. All finance tables enable RLS and deny direct access to `anon` and `authenticated`; only the server role can use the finance functions. The browser cannot update `finance_access`. The page also requests no search indexing. Public availability will require an intentional access-model change, not just a navigation link.
 
 ### Database inventory
 
-All sixteen app tables are in `public` with the `finance_` prefix. The migrations also define twelve `finance_*` functions, including internal validation/calculation helpers; direct client roles cannot call these functions:
+All sixteen app tables are in `public` with the `finance_` prefix. The migrations also define thirteen `finance_*` functions, including internal validation/calculation helpers; direct client roles cannot call these functions:
 
 | Table | Purpose |
 | --- | --- |
@@ -37,8 +38,8 @@ All sixteen app tables are in `public` with the `finance_` prefix. The migration
 | `finance_plans` | Finite installment and payment-plan agreements |
 | `finance_entries` | Individual bills, income, and generated occurrences/installments |
 | `finance_payments` | Actual payment/receipt ledger, immutable account/method snapshots, and retained reversed records |
-| `finance_debts` | Credit-report and collection accounts, balances, offers, and source links |
-| `finance_debt_history` | Debt changes and transfer/reversal history |
+| `finance_debts` | Credit-report and collection accounts, responsible household names, balances, offers, and source links |
+| `finance_debt_history` | Debt changes, previous/current household names, and transfer/reversal history |
 | `finance_spending` | Saved Live Money planning spending, scoped to an account or Unassigned |
 | `finance_entry_history` | Database audit of entry edits, moves, and status changes |
 
@@ -62,7 +63,7 @@ Add accounts in **Banks & cards** with a balance at the start of their opening d
 | Savings | Savings-account balances, goal allocations and targets, earned milestones, allocation history, and archive/restore controls |
 | Reminders | Upcoming and overdue planned bill dates, snooze controls, optional device alerts, and calendar reminder downloads |
 | Vendors | Reusable companies, payment websites, linked bills/income, and manually recorded payment/receipt history |
-| Credit & collections | Original/current creditors, current debt balances, offers, status, dates, notes, and change history |
+| Credit & collections | Original/current creditors, household person filters, shared debts, balances, offers, status, dates, notes, and change history |
 | Reports | Saved cash-flow outlook, recorded receipts/payments, original commitments by category, plan progress, and exports |
 
 ### Original dates, planned dates, and actual payments
@@ -142,6 +143,14 @@ Debt offers are proposals: unexpired settlement offers show a potential reduced 
 
 `Closed`, `Charged off`, and a removal date do not erase a balance. Set the actual current balance explicitly; `Paid` requires zero. These are tracking statuses, not confirmation from a credit bureau or creditor.
 
+### Household names and shared debts
+
+In **Add credit or collection item**, **Manage debt**, or **Move to collections**, add one or more people responsible for the item. Choose a previously used name or enter a new one. Each debt accepts up to 20 distinct names, with up to 100 characters per name. Surrounding and repeated spaces are normalized; case-only duplicates become one name. A comma remains part of the name, so `Last, First` is one person. Remove every name to leave the debt unassigned. Names are organizational labels inside the private workspace; they do not create accounts or grant anyone access.
+
+Use the **Person** menu on Credit & collections to show **All people**, **Unassigned debts**, or one saved name. Matching uses the complete name without regard to case; `Ann` does not also select `Anna`. Existing debt records without names remain in Unassigned debts. A shared item displays all assigned names and a Shared badge. Its full balance appears in each responsible person's view, while All people counts that debt only once. No balance is split into individual shares, and separate person totals should not be added together to find the household total.
+
+The top summary describes every debt assigned to the selected person across dates, locations, and statuses. Location, status, and search filters refine the list and its displayed totals. Household views are independent of bank/card account selection. Editing names preserves the debt's original balance and records both previous and updated assignments in its change history. Bills or plans moved to collections carry the names entered in the transfer form; retrying the same transfer preserves the saved assignment and does not create another debt.
+
 ### Bill reminders, printing, and mobile use
 
 Bills and plans default to a reminder three days before the planned payment date. Choose Off, the date itself, or a lead time in the editor. Income does not create bill reminders. Reminders use the **planned date**, while the original due date remains visible for a moved bill. Unpaid active archived bills still qualify; fully paid, cancelled, and collection items do not. Snoozing delays the reminder only and does not reschedule the bill.
@@ -156,9 +165,9 @@ The print button opens the browser's print dialog for the current page, with pag
 
 ## Exports and a future project move
 
-Reports offers **Export month CSV** for the selected month/account saved daily forecast, including starting balances, dated adjustments, and transfer movement. **Export all accounts (JSON)** always includes all accounts and the app's materialized entries, payment snapshots, recurring/custom definitions, vendors, plans, debt/history, openings and balance updates, transfers, savings goals/history/milestones, reminder settings, and saved planning spending. Temporary test changes and device-local notification preferences are excluded. JSON uses `schema_version: 3` and includes an export time; there is currently no import UI. It does not include Auth users, `finance_access`, or `finance_entry_history`, so use a database backup/export for a complete migration.
+Reports offers **Export month CSV** for the selected month/account saved daily forecast, including starting balances, dated adjustments, and transfer movement. **Export all accounts (JSON)** always includes all accounts and the app's materialized entries, payment snapshots, recurring/custom definitions, vendors, plans, debt/history with responsible household names, openings and balance updates, transfers, savings goals/history/milestones, reminder settings, and saved planning spending. Temporary test changes and device-local notification preferences are excluded. JSON uses `schema_version: 3` and includes an export time; there is currently no import UI. It does not include Auth users, `finance_access`, or `finance_entry_history`, so use a database backup/export for a complete migration.
 
-For a separate Supabase project, migrate all sixteen tables, preserve IDs/relationships, cents, signed account balances, original dates, custom schedules, payment account/method snapshots, goal milestones, and history, and recreate the `finance_*` functions, indexes, constraints, RLS, and grants from all four migrations. Preserve or explicitly remap every `user_id` to the destination Auth account. The current authorization also depends on `hub_staff`, `hub_actor_can`, and the shared Hub session/context; those dependencies need an equivalent authorization design in a standalone app. The current Supabase environment variables are shared with the Hub, so moving finance alone also requires separating its connection/auth integration. Verify owner isolation and ledger totals before switching traffic.
+For a separate Supabase project, migrate all sixteen tables, preserve IDs/relationships, cents, signed account balances, original dates, custom schedules, payment account/method snapshots, household names, goal milestones, and history, and recreate the `finance_*` functions, indexes, constraints, RLS, and grants from all five migrations. Preserve or explicitly remap every `user_id` to the destination Auth account. The current authorization also depends on `hub_staff`, `hub_actor_can`, and the shared Hub session/context; those dependencies need an equivalent authorization design in a standalone app. The current Supabase environment variables are shared with the Hub, so moving finance alone also requires separating its connection/auth integration. Verify owner isolation and ledger totals before switching traffic.
 
 ## Development checks
 
@@ -171,4 +180,4 @@ npm test
 npm run build
 ```
 
-`npm run test:finance` runs `tests/finance-calculations.mjs`, `tests/finance-vendors.mjs`, `tests/finance-reminders.mjs`, and `supabase/tests/finance.test.mjs`; it is also included in `npm test`. These cover calculations and account-scoped forecasts, dated balance ordering, immutable payment attribution, transfer accounting, savings allocation limits and milestones, reminders/calendar exports, original/planned/paid distinctions, custom recurrence, vendor links/history and URL validation, partial payments and reversals, plan/collection accounting, actor isolation, table/RPC grants, and RLS. Database tests use isolated PGlite fixtures and do not connect to hosted Supabase. The existing `tests/workspace-finance.mjs` covers the separate company accounting module.
+`npm run test:finance` runs `tests/finance-calculations.mjs`, `tests/finance-vendors.mjs`, `tests/finance-reminders.mjs`, `tests/finance-debt-people.mjs`, and `supabase/tests/finance.test.mjs`; it is also included in `npm test`. These cover calculations and account-scoped forecasts, dated balance ordering, immutable payment attribution, transfer accounting, savings allocation limits and milestones, reminders/calendar exports, original/planned/paid distinctions, custom recurrence, vendor links/history and URL validation, household name validation and exact person filters, shared debt totals without double counting, partial payments and reversals, plan/collection accounting, actor isolation, table/RPC grants, and RLS. Database tests use isolated PGlite fixtures and do not connect to hosted Supabase. The existing `tests/workspace-finance.mjs` covers the separate company accounting module.
