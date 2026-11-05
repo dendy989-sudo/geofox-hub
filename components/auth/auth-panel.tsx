@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import "./auth.css";
 
-export function AuthPanel({ configured, passwordUpdate = false }: { configured: boolean; passwordUpdate?: boolean }) {
+export function AuthPanel({ configured, passwordUpdate = false, nextPath = "/admin" }: { configured: boolean; passwordUpdate?: boolean; nextPath?: string }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,7 +39,7 @@ export function AuthPanel({ configured, passwordUpdate = false }: { configured: 
         const totp = factors.data?.totp.find(f => f.status === "verified");
         if (!totp) throw new Error("Complete your account’s verification before opening the hub.");
         setFactorId(totp.id); setPassword(""); setMessage("Enter the code from your authenticator app.");
-      } else { router.replace("/admin"); router.refresh(); }
+      } else { router.replace(nextPath === "/finance" ? "/finance" : "/admin"); router.refresh(); }
     } catch (e) { setError(e instanceof Error ? e.message : "Sign-in could not be completed."); }
     finally { setBusy(false); }
   }
