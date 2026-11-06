@@ -32,6 +32,7 @@
 .finance-root .fr-inline-confirm>p{font-size:10px;color:#a54960;margin:0 0 8px;line-height:1.6}
 .finance-root .fr-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .finance-root .fr-toolbar-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.finance-root .fr-toolbar-controls>label{min-width:0;max-width:100%}
 .finance-root .fr-toolbar select{appearance:auto;min-height:38px;border:1px solid var(--fn-line);border-radius:8px;background:#fff;color:#53617b;font:inherit;font-size:11px;padding:8px 30px 8px 11px;max-width:260px}
 .finance-root .fr-search{position:relative;display:flex;align-items:center;flex:1;min-width:215px;max-width:390px}
 .finance-root .fr-search>svg{position:absolute;left:13px;color:#8996ab;pointer-events:none}
@@ -55,6 +56,17 @@
 .finance-root .fr-record-title:hover{color:var(--fn-purple)}
 .finance-root .fr-record-title:focus-visible,.finance-root .fr-text-button:focus-visible,.finance-root .fr-collection-link:focus-visible{outline:2px solid #ad9ce7;outline-offset:4px;border-radius:2px}
 .finance-root .fr-repeat{display:inline-flex!important;align-items:center;gap:4px;color:#8172b2!important}
+.finance-root .fr-overdue-days{color:#bc6174!important;font-weight:550}
+.finance-root .fr-record-tags{display:flex;flex-wrap:wrap;align-items:flex-start;gap:5px;list-style:none;margin:8px 0 0;padding:0;min-width:0}
+.finance-root .fr-record-tags li{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px;max-width:100%;padding:3px 6px;border:1px solid #deddf1;border-radius:5px;background:#f4f2fc;color:#8d7daf;font-size:9px;line-height:1.5;overflow-wrap:anywhere}
+.finance-root .fr-record-tags li>span{min-width:0;overflow-wrap:anywhere}
+.finance-root .fr-record-tags li.archived{background:#f4f5f8;border-color:#e4e6ed;color:#9ba1b0}
+.finance-root .fr-record-tags li small{display:inline;font-size:8px;line-height:1.5;margin:0;color:#a5a9b7}
+.finance-root .fr-tag-context{display:grid;gap:6px;padding:13px 16px;border:1px solid #e5e0f3;border-radius:9px;background:#fbf9fe;color:#9687a9;min-width:0}
+.finance-root .fr-tag-context>span{display:flex;align-items:center;flex-wrap:wrap;gap:7px;font-size:10px;line-height:1.6;overflow-wrap:anywhere}
+.finance-root .fr-tag-context strong{font-size:12px;font-weight:550;color:#83709e;overflow-wrap:anywhere;min-width:0}
+.finance-root .fr-tag-context p{font-size:10px;line-height:1.65;margin:0;color:#9a8ba9}
+.finance-root .fr-record-filter-context{font-size:10px;line-height:1.7;color:#939caf;margin:0;overflow-wrap:anywhere}
 .finance-root .fr-account-method{display:flex!important;align-items:flex-start;gap:5px;color:#748099!important;font-size:10px!important;max-width:300px}
 .finance-root .fr-account-method>svg{flex:none;margin-top:2px}
 .finance-root .fr-account-method>span{min-width:0;overflow-wrap:anywhere}
@@ -182,7 +194,7 @@
   .finance-root .fr-record-title{font-size:13px}
   .finance-root .fr-debt-details{grid-template-columns:repeat(2,minmax(0,1fr));gap:17px}
   .finance-root .fr-toolbar-controls{justify-content:flex-start;flex-basis:100%}
-  .finance-root .fr-toolbar-controls>label{flex:1}
+  .finance-root .fr-toolbar-controls>label{flex:1 1 160px}
   .finance-root .fr-toolbar select{width:100%;max-width:none}
 }
 @media(max-width:520px){
@@ -258,6 +270,10 @@
 .finance-root .fr-month-day>input:disabled+span{opacity:.6}
 .finance-root .fr-repeat-hint{font-size:10px;line-height:1.7;color:#8b7e9c;margin:12px 0 0!important}
 .finance-root .fr-repeat-hint.invalid{color:#ad526b}
+.finance-root .fr-backfill-notice{display:flex;align-items:flex-start;gap:9px;padding:12px 13px;border:1px solid #eddfc9;border-radius:8px;background:#fffbf3;color:#aa8a5a;font-size:10px;line-height:1.7}
+.finance-root .fr-backfill-notice>svg{flex:none;margin-top:2px}
+.finance-root .fr-backfill-notice p{margin:0}
+.finance-root .fr-backfill-notice strong{font-weight:600}
 .finance-root .fr-specific-dates{display:grid;gap:13px;min-width:0}
 .finance-root .fr-specific-dates>p{margin:0}
 .finance-root .fr-add-date{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:10px}
@@ -296,6 +312,8 @@
   .finance-root .fr-month-days{grid-template-columns:repeat(5,minmax(0,1fr))}
 }
 @media print{
+  .finance-root .fr-tag-context,.finance-root .fr-record-filter-context{break-inside:avoid}
+  .finance-root .fr-record-tags li{font-size:7pt}
   .finance-root .fr-person-filter{display:none!important}
   .finance-root .fr-debt-scope{display:block;break-inside:avoid;padding:10pt 12pt}
   .finance-root .fr-debt-scope h2{font-size:14pt}

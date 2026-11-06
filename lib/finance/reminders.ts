@@ -1,4 +1,4 @@
-import { remainingAmount } from "./calculations.ts";
+import { daysPastDue, remainingAmount } from "./calculations.ts";
 import type { FinanceData, FinanceEntry } from "./types";
 
 export interface BillReminder {
@@ -7,6 +7,8 @@ export interface BillReminder {
   state: "past_due" | "today" | "upcoming" | "snoozed";
   reminder_date: string;
   original_past_due: boolean;
+  /** Calendar days since the original due date; moving or snoozing never resets this count. */
+  days_past_due: number;
 }
 export function shiftDate(date: string, days: number): string {
   const value = new Date(`${date}T12:00:00Z`);
@@ -27,6 +29,7 @@ export function billReminders(data: FinanceData, today = data.today): BillRemind
     return [{ entry, remaining_cents: remainingAmount(entry, data.payments), reminder_date: reminderDate,
       state: entry.reminder_snoozed_until && entry.reminder_snoozed_until > today ? "snoozed" as const : entry.scheduled_date < today ? "past_due" as const : entry.scheduled_date === today ? "today" as const : "upcoming" as const,
       original_past_due: entry.original_due_date < today,
+      days_past_due: daysPastDue(entry, data.payments, today),
     }];
   }).sort((a, b) => a.entry.scheduled_date.localeCompare(b.entry.scheduled_date) || a.entry.title.localeCompare(b.entry.title));
 }

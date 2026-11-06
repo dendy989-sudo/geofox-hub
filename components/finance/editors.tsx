@@ -10,6 +10,7 @@ import { normalizeVendorUrl, vendorForEntry, vendorWebsiteUrl } from "@/lib/fina
 import { debtPeopleOptions } from "@/lib/finance/debt-people";
 import { FinanceDialog, Money, formatDate, formatMoney } from "./shared";
 import { DebtPeopleField, DebtPeopleHistory, useDebtPeopleField } from "./debt-people-field";
+import { FinanceTagField, useFinanceTagField } from "./tag-field";
 import "./records.css";
 
 interface EditorBase {
@@ -152,54 +153,74 @@ export function EntryEditor({ data, month, today, mutate, onClose, accountScope,
   const id = useRef(entry?.id ?? "");
   const vendor = useVendorFields(entry?.vendor_id);
   const action = useFormAction();
+  const tags = useFinanceTagField({ data, mutate, initialIds: entry?.tag_ids });
+  const busy = action.pending || tags.pending;
   const receipts = entry ? data.payments.filter(payment => payment.entry_id === entry.id).sort((a, b) => b.paid_on.localeCompare(a.paid_on) || b.created_at.localeCompare(a.created_at)) : [];
   const series = entry?.series_id ? data.series.find(item => item.id === entry.series_id) : null;
   const paid = entry ? paidAmount(entry, data.payments) : 0;
   const categories = income ? INCOME_CATEGORIES : FINANCE_CATEGORIES;
+  const specificCreation = !entry && frequency === "custom" && customMode === "specific_dates";
   const selectedDates = [...new Set([originalDue, ...customDates].filter(Boolean))].sort();
+  const previewDates = [...new Set([...selectedDates, ...(dateToAdd && validCustomDate(dateToAdd) ? [dateToAdd] : [])])].sort();
+  const pastCustomDates = specificCreation ? previewDates.filter(item => item < today) : [];
   const matchesMonthPattern = validCustomDate(originalDue) && customMonthDays.some(day => Math.min(day, monthDays(originalDue.slice(0, 7)).length) === Number(originalDue.slice(8)));
-  const close = () => { if (!action.pending) onClose(); };
+  const close = () => { if (!action.pending && !tags.isCreating()) onClose(); };
   function changeOriginalDate(next: string) {
     if (customMonthDays.length === 1 && customMonthDays[0] === Number(originalDue.slice(8)) && validCustomDate(next)) setCustomMonthDays([Number(next.slice(8))]);
     if (scheduledDate === originalDue) setScheduledDate(next);
     setOriginalDue(next);
   }
+  function applySpecificDates(values: string[]) {
+    const next = [...new Set(values.filter(Boolean))].sort();
+    if (!next.length) return;
+    setCustomDates(next);
+    if (next[0] !== originalDue) changeOriginalDate(next[0]);
+  }
   function addCustomDate() {
-    if (!validCustomDate(originalDue)) return action.setError("Choose the original due date before adding custom dates.");
     if (!validCustomDate(dateToAdd)) return action.setError("Choose a valid calendar date to add.");
-    if (dateToAdd < originalDue) return action.setError("Custom dates must be on or after the original due date.");
     if (endDate && dateToAdd > endDate) return action.setError("This date is after the repeat end date. Choose an earlier date or change Repeat until.");
     if (new Set([...selectedDates, dateToAdd]).size > 240) return action.setError("A custom schedule can include up to 240 dates. Remove a date before adding another.");
-    if (dateToAdd !== originalDue) setCustomDates(old => [...new Set([...old, dateToAdd])].sort());
+    applySpecificDates([...selectedDates, dateToAdd]);
     setDateToAdd("");
+    action.setError("");
+  }
+  function removeCustomDate(value: string) {
+    const next = selectedDates.filter(item => item !== value);
+    if (!next.length) return action.setError("Keep at least one date in the schedule.");
+    applySpecificDates(next);
     action.setError("");
   }
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (tags.isCreating()) return action.setError("Wait for the new tag to finish creating before saving.");
     const cents = parseMoney(amount);
     if (cents === null || cents <= 0) return action.setError("Enter an amount greater than zero, using up to two decimal places.");
     if (cents < paid) return action.setError(`The amount cannot be less than the ${formatMoney(paid)} already ${income ? "received" : "paid"}. Reverse an incorrect payment first.`);
     if (!title.trim()) return action.setError(`Enter a name for this ${income ? "income" : "bill"}.`);
-    if (!entry && frequency !== "once" && endDate && endDate < originalDue) return action.setError("The repeat end date must be on or after the first due date.");
     const dates = [...new Set([...selectedDates, ...(dateToAdd ? [dateToAdd] : [])])].sort();
+    const firstDue = specificCreation ? dates[0] ?? originalDue : originalDue;
+    const plannedDate = specificCreation && scheduledDate === originalDue ? firstDue : scheduledDate;
+    if (!entry && frequency !== "once" && endDate && endDate < firstDue) return action.setError("The repeat end date must be on or after the first due date.");
     if (!entry && frequency === "custom") {
       if (customMode === "month_days") {
         if (!customMonthDays.length) return action.setError("Choose at least one day of the month for this schedule.");
         if (!matchesMonthPattern) return action.setError("The original due date must match a selected monthly day. Change that date or select its day below.");
       } else {
         if (dates.length > 240) return action.setError("A custom schedule can include up to 240 dates, including the original due date.");
-        if (dates.some(item => !validCustomDate(item) || item < originalDue)) return action.setError("Every custom date must be valid and on or after the original due date. Remove earlier dates or change the original due date.");
+        if (!dates.length || dates.some(item => !validCustomDate(item))) return action.setError("Choose valid custom dates from January 1, 2000 through December 31, 2100.");
         if (endDate && dates.some(item => item > endDate)) return action.setError("Some custom dates are after Repeat until. Remove those dates or change the repeat end date.");
       }
     }
     let vendorPayload: VendorPayload;
     try { vendorPayload = vendor.payload(); }
     catch (cause) { return action.setError(cause instanceof Error ? cause.message : "Check the vendor name and website."); }
+    const tagIds = tags.prepareForSave();
+    if (tagIds === null) return;
     id.current ||= financeId();
     void action.run(() => mutate("save_entry", {
       id: id.current, kind, title: title.trim(), category, expense_type: income ? "bill" : expenseType,
-      amount_cents: cents, original_due_date: entry?.original_due_date ?? originalDue,
-      scheduled_date: scheduledDate, notes: notes.trim(),
+      amount_cents: cents, original_due_date: entry?.original_due_date ?? firstDue,
+      scheduled_date: plannedDate, notes: notes.trim(), tag_ids: tagIds,
       account_id: accountId, payment_method: method, reminder_days: income ? null : reminderDays,
       ...(!entry ? { frequency, end_date: frequency === "once" ? null : endDate || null,
         ...(frequency === "custom" ? { custom_mode: customMode, custom_month_days: customMode === "month_days" ? customMonthDays : [], custom_dates: customMode === "specific_dates" ? dates : [] } : {}) } : {}),
@@ -211,36 +232,37 @@ export function EntryEditor({ data, month, today, mutate, onClose, accountScope,
       <p className="fr-form-intro">{income ? "Income appears in your overview, calendar, and Live Money. Record receipts as money arrives." : "Bills are committed expenses. Saving here updates your overview, calendar, and Live Money. Everyday spending belongs in Live Money."}</p>
       {entry?.series_id && <div className="fr-info"><Icon name="refresh" size={17} /><span>You are editing one occurrence. Other repeats keep their existing amounts and original dates.</span></div>}
       {entry?.plan_id && <div className="fr-info"><Icon name="layers" size={17} /><span>This bill is part of a payment schedule. Its payments also update the plan’s progress.</span></div>}
-      <fieldset className="fr-fieldset" disabled={action.pending || entry?.status === "collections"}>
+      <fieldset className="fr-fieldset" disabled={busy || entry?.status === "collections"}>
         <div className="fn-fields">
           <label className="fn-field full"><span>{income ? "Income name" : "Bill name"}</span><input autoFocus value={title} onChange={event => setTitle(event.target.value)} maxLength={160} required placeholder={income ? "e.g. Main paycheck" : "e.g. Rent, electric, or car insurance"} /></label>
           <AmountInput label={income ? "Expected amount" : "Bill amount"} value={amount} onChange={setAmount} hint={entry && entry.original_amount_cents !== parseMoney(amount) ? `Originally ${formatMoney(entry.original_amount_cents)}. Your original monthly obligation stays visible.` : undefined} />
           <label className="fn-field"><span>Category</span><select value={category} onChange={event => setCategory(event.target.value)}>{!categories.some(item => item === category) && <option value={category}>{category}</option>}{categories.map(item => <option key={item}>{item}</option>)}</select></label>
           <VendorFields data={data} vendor={vendor} help={entry?.series_id ? "Changing the vendor here updates this occurrence only. Other repeats keep their original vendor." : undefined} />
+          <FinanceTagField field={tags} disabled={busy || entry?.status === "collections"} help={entry?.series_id ? "Changing tags updates this occurrence only. Future repeats keep the series tags." : entry?.plan_id ? "Plan tag changes update installments that still match the old defaults; a different tag selection stays unchanged." : undefined} />
           <AccountMethodFields data={data} kind={kind} accountId={accountId} setAccountId={setAccountId} originalAccountId={entry?.account_id} method={method} setMethod={setMethod} reminderDays={reminderDays} setReminderDays={setReminderDays} help={entry?.series_id ? "This changes the account for this occurrence only. Other repeats and recorded payment accounts stay unchanged." : entry?.plan_id ? "This changes this installment’s account. Recorded payment accounts stay unchanged." : undefined} />
           {!income && <label className="fn-field full"><span>Expense type</span><select value={expenseType} onChange={event => setExpenseType(event.target.value as ExpenseType)} disabled={Boolean(entry?.plan_id)}><option value="bill">Regular bill</option><option value="installment">Installment</option><option value="payment_plan">Payment plan</option></select>{!entry?.plan_id && expenseType !== "bill" && <small>This labels this bill. To generate and track a complete payment schedule, add a plan on the Payments page.</small>}</label>}
-          <label className="fn-field"><span>{income ? "Original expected date" : "Original due date"}</span><input type="date" value={originalDue} min="2000-01-01" max="2100-12-31" disabled={Boolean(entry)} required onChange={event => changeOriginalDate(event.target.value)} /><small>{entry ? "Kept for your records, even when the planned date changes." : "The date this amount is originally due."}</small></label>
+          <label className="fn-field"><span>{income ? "Original expected date" : "Original due date"}</span><input type="date" value={originalDue} min="2000-01-01" max="2100-12-31" disabled={Boolean(entry)} readOnly={specificCreation} required onChange={event => changeOriginalDate(event.target.value)} /><small>{entry ? "Kept for your records, even when the planned date changes." : specificCreation ? "The earliest selected date. Add or remove custom dates below to change it." : "The date this amount is originally due."}</small></label>
           <label className="fn-field"><span>{income ? "Planned receipt date" : "Planned payment date"}</span><input type="date" value={scheduledDate} onChange={event => setScheduledDate(event.target.value)} required /><small>{scheduledDate !== originalDue ? "Moved · original date remains unchanged." : "Move this date when you need to plan for another day."}</small></label>
           {!entry && <><label className="fn-field"><span>Repeat</span><select value={frequency} onChange={event => setFrequency(event.target.value as Frequency | "once")}>{Object.entries(FREQUENCY_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>{frequency !== "once" && <label className="fn-field"><span>Repeat until <span className="fr-optional">optional</span></span><input type="date" value={endDate} min={originalDue} max="2100-12-31" onChange={event => setEndDate(event.target.value)} /><small>{frequency === "custom" && customMode === "specific_dates" ? "Leave blank to include every date you choose below." : "Leave blank to continue until you pause the series."}</small></label>}</>}
           {!entry && frequency === "custom" && <div className="fr-custom-repeat full">
             <label className="fn-field"><span>Custom schedule</span><select value={customMode} onChange={event => setCustomMode(event.target.value as CustomRepeatMode)}><option value="month_days">Choose days each month</option><option value="specific_dates">Choose specific calendar dates</option></select></label>
-            {customMode === "month_days" ? <fieldset className="fr-month-picker"><legend>Days of the month</legend><p className="fn-muted fr-small">Choose one or more days, such as the 1st and 15th. Days 29–31 use the last day of shorter months; overlapping days create one occurrence.</p><div className="fr-month-days">{Array.from({ length: 31 }, (_, index) => index + 1).map(day => <label key={day} className="fr-month-day"><input type="checkbox" checked={customMonthDays.includes(day)} aria-label={`Repeat on day ${day} of each month`} onChange={event => { const checked = event.target.checked; setCustomMonthDays(old => checked ? [...old, day].sort((a, b) => a - b) : old.filter(value => value !== day)); }} /><span>{day}</span></label>)}</div><p className={`fr-repeat-hint${customMonthDays.length && !matchesMonthPattern ? " invalid" : ""}`}>{customMonthDays.length ? `Selected: ${customMonthDays.join(", ")}. ${matchesMonthPattern ? "Your first due date matches this schedule." : "Choose a matching original due date, or add its day above."}` : "Select at least one day to repeat."}</p></fieldset> : <div className="fr-specific-dates"><p className="fn-muted fr-small">Choose each date this amount is due. Your original due date is always included as the first occurrence. You can schedule up to 240 dates.</p><div className="fr-add-date"><label className="fn-field"><span>Add a calendar date</span><input type="date" min={originalDue || "2000-01-01"} max={endDate || "2100-12-31"} value={dateToAdd} onChange={event => setDateToAdd(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); addCustomDate(); } }} /></label><button type="button" className="fn-button" disabled={!dateToAdd} onClick={addCustomDate}><Icon name="plus" size={13} />Add date</button></div><div className="fr-section-caption"><strong>Selected dates</strong><span>{selectedDates.length} / 240</span></div><ul className="fr-date-chips" aria-label="Selected custom dates">{selectedDates.map(item => <li key={item} className={item < originalDue || (endDate && item > endDate) ? "invalid" : ""}><span>{formatDate(item)}</span>{item === originalDue ? <small>First</small> : <button type="button" onClick={() => setCustomDates(old => old.filter(value => value !== item))} aria-label={`Remove ${formatDate(item)} from the schedule`}><Icon name="close" size={12} /></button>}</li>)}</ul>{selectedDates.some(item => item < originalDue || (endDate && item > endDate)) && <p className="fr-repeat-hint invalid">Remove dates outside your first due date and repeat end date, or adjust those limits above.</p>}</div>}
+            {customMode === "month_days" ? <fieldset className="fr-month-picker"><legend>Days of the month</legend><p className="fn-muted fr-small">Choose one or more days, such as the 1st and 15th. Days 29–31 use the last day of shorter months; overlapping days create one occurrence.</p><div className="fr-month-days">{Array.from({ length: 31 }, (_, index) => index + 1).map(day => <label key={day} className="fr-month-day"><input type="checkbox" checked={customMonthDays.includes(day)} aria-label={`Repeat on day ${day} of each month`} onChange={event => { const checked = event.target.checked; setCustomMonthDays(old => checked ? [...old, day].sort((a, b) => a - b) : old.filter(value => value !== day)); }} /><span>{day}</span></label>)}</div><p className={`fr-repeat-hint${customMonthDays.length && !matchesMonthPattern ? " invalid" : ""}`}>{customMonthDays.length ? `Selected: ${customMonthDays.join(", ")}. ${matchesMonthPattern ? "Your first due date matches this schedule." : "Choose a matching original due date, or add its day above."}` : "Select at least one day to repeat."}</p></fieldset> : <div className="fr-specific-dates"><p className="fn-muted fr-small">Choose up to 240 dates, including earlier unpaid {income ? "income" : "bills"}. Adding an earlier date moves the first due date back and keeps the date you originally selected. You can remove any selected date while keeping at least one.</p><div className="fr-add-date"><label className="fn-field"><span>Add a calendar date</span><input type="date" min="2000-01-01" max={endDate || "2100-12-31"} value={dateToAdd} onChange={event => setDateToAdd(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); addCustomDate(); } }} /></label><button type="button" className="fn-button" disabled={!dateToAdd} onClick={addCustomDate}><Icon name="plus" size={13} />Add date</button></div><div className="fr-section-caption"><strong>Selected dates</strong><span>{selectedDates.length} / 240</span></div><ul className="fr-date-chips" aria-label="Selected custom dates">{selectedDates.map(item => <li key={item} className={endDate && item > endDate ? "invalid" : ""}><span>{formatDate(item)}</span>{item === originalDue ? <small>First</small> : null}{selectedDates.length > 1 ? <button type="button" onClick={() => removeCustomDate(item)} aria-label={`Remove ${formatDate(item)} from the schedule`}><Icon name="close" size={12} /></button> : null}</li>)}</ul>{dateToAdd && validCustomDate(dateToAdd) ? <p className="fr-repeat-hint">The date in the picker is also included when you save. The schedule will start {formatDate(previewDates[0])}.</p> : null}{selectedDates.some(item => endDate && item > endDate) ? <p className="fr-repeat-hint invalid">Some selected dates are after Repeat until. Remove them or extend the end date.</p> : null}{pastCustomDates.length ? <div className="fr-backfill-notice"><Icon name="clock" size={16} /><p><strong>{pastCustomDates.length} earlier {pastCustomDates.length === 1 ? "date" : "dates"} before today.</strong> These dates create {income ? "income still awaiting receipt" : "unpaid bill occurrences"} with their original due dates. Use them for amounts still outstanding. Existing records keep their dates and payment history.</p></div> : null}</div>}
           </div>}
           <NotesInput value={notes} onChange={setNotes} />
         </div>
       </fieldset>
       {entry?.status === "collections" && <div className="fr-info"><Icon name="info" size={17} /><span>This balance was moved to collections. Manage it in Credit & collections. Original dates and payment history stay here.</span></div>}
       <FormError message={action.error} />
-      <div className="fn-actions end"><button className="fn-button" type="button" onClick={close} disabled={action.pending}>Close</button>{entry?.status !== "collections" && <button className="fn-button primary" type="submit" disabled={action.pending}>{action.pending ? "Saving…" : entry ? "Save changes" : `Add ${income ? "income" : "bill"}`}</button>}</div>
+      <div className="fn-actions end"><button className="fn-button" type="button" onClick={close} disabled={busy}>Close</button>{entry?.status !== "collections" && <button className="fn-button primary" type="submit" disabled={busy}>{action.pending ? "Saving…" : tags.pending ? "Creating tag…" : entry ? "Save changes" : `Add ${income ? "income" : "bill"}`}</button>}</div>
     </form>
     {entry && <div className="fr-editor-section">
       <div className="fn-row"><h3>{income ? "Receipt history" : "Payment history"}</h3><strong><Money cents={paid} /> {income ? "received" : "paid"}</strong></div>
-      {receipts.length ? <div className="fr-history">{receipts.map(payment => <div className={`fr-history-item${payment.reversed_at ? " reversed" : ""}`} key={payment.id}><div><strong><Money cents={payment.amount_cents} /></strong><span>{formatDate(payment.paid_on)}{payment.reversed_at ? " · Reversed" : ""}</span><span className="fr-payment-meta">{accountLabel(data, payment.account_id)} · {PAYMENT_METHOD_LABELS[payment.payment_method ?? "manual"]}</span>{payment.note && <p>{payment.note}</p>}</div>{!payment.reversed_at && (reversal === payment.id ? <div className="fr-inline-confirm"><p>Reverse this record? Its amount will become outstanding again.</p><div className="fn-actions"><button className="fn-button small" type="button" disabled={action.pending} onClick={() => setReversal(null)}>Keep record</button><button className="fn-button small danger" type="button" disabled={action.pending} onClick={() => { void action.run(() => mutate("remove_payment", { id: payment.id }), () => setReversal(null)); }}>Reverse</button></div></div> : <button className="fn-button small subtle" type="button" disabled={action.pending} onClick={() => setReversal(payment.id)}>Reverse</button>)}</div>)}</div> : <p className="fn-muted fr-small">No {income ? "receipts" : "payments"} recorded yet. Use “{income ? "Record receipt" : "Record payment"}” on the list to record full or partial amounts.</p>}
+      {receipts.length ? <div className="fr-history">{receipts.map(payment => <div className={`fr-history-item${payment.reversed_at ? " reversed" : ""}`} key={payment.id}><div><strong><Money cents={payment.amount_cents} /></strong><span>{formatDate(payment.paid_on)}{payment.reversed_at ? " · Reversed" : ""}</span><span className="fr-payment-meta">{accountLabel(data, payment.account_id)} · {PAYMENT_METHOD_LABELS[payment.payment_method ?? "manual"]}</span>{payment.note && <p>{payment.note}</p>}</div>{!payment.reversed_at && (reversal === payment.id ? <div className="fr-inline-confirm"><p>Reverse this record? Its amount will become outstanding again.</p><div className="fn-actions"><button className="fn-button small" type="button" disabled={busy} onClick={() => setReversal(null)}>Keep record</button><button className="fn-button small danger" type="button" disabled={busy} onClick={() => { void action.run(() => mutate("remove_payment", { id: payment.id }), () => setReversal(null)); }}>Reverse</button></div></div> : <button className="fn-button small subtle" type="button" disabled={busy} onClick={() => setReversal(payment.id)}>Reverse</button>)}</div>)}</div> : <p className="fn-muted fr-small">No {income ? "receipts" : "payments"} recorded yet. Use “{income ? "Record receipt" : "Record payment"}” on the list to record full or partial amounts.</p>}
     </div>}
-    {series && <div className="fr-editor-section"><div className="fn-row"><div><h3>Recurring {income ? "income" : "bill"}</h3><p className="fn-muted fr-small">{FREQUENCY_LABELS[series.frequency]} · {series.active ? "Repeats are active" : "Repeats are paused"}{series.end_date ? ` · Ends ${formatDate(series.end_date)}` : ""}</p></div><button className="fn-button small" type="button" disabled={action.pending} onClick={() => { void action.run(() => mutate("save_series", { id: series.id, active: !series.active })); }}>{series.active ? "Pause repeats" : "Resume repeats"}</button></div>
+    {series && <div className="fr-editor-section"><div className="fn-row"><div><h3>Recurring {income ? "income" : "bill"}</h3><p className="fn-muted fr-small">{FREQUENCY_LABELS[series.frequency]} · {series.active ? "Repeats are active" : "Repeats are paused"}{series.end_date ? ` · Ends ${formatDate(series.end_date)}` : ""}</p></div><button className="fn-button small" type="button" disabled={busy} onClick={() => { void action.run(() => mutate("save_series", { id: series.id, active: !series.active })); }}>{series.active ? "Pause repeats" : "Resume repeats"}</button></div>
       {series.frequency === "custom" && <div className="fr-series-pattern">{series.custom_mode === "month_days" ? <><strong>Every month on days {series.custom_month_days.join(", ")}</strong><p>Starts {formatDate(series.start_date)}. Days 29–31 use the last available day in shorter months, with one occurrence per date.</p></> : <details className="fr-series-dates"><summary><span>{series.custom_dates.length} selected calendar {series.custom_dates.length === 1 ? "date" : "dates"}</span><span>View schedule <Icon name="chevron" size={12} /></span></summary><ul className="fr-date-chips" aria-label="Saved custom schedule">{series.custom_dates.map(item => <li key={item}><span>{formatDate(item)}</span>{item === series.start_date ? <small>First</small> : null}</li>)}</ul></details>}<small>The repeating pattern is kept as created. This editor changes one occurrence.</small></div>}
       <p className="fn-muted fr-small">Pausing stops new occurrences. Already created bills and income keep their own status. Resuming generates missed occurrences from the original schedule, including dates while paused. Cancel any occurrences that no longer apply.</p></div>}
-    {entry && entry.status !== "collections" && <div className="fr-editor-section"><h3>Record status</h3><p className="fn-muted fr-small">{income ? "Cancel income that will no longer arrive." : "Cancel a bill that no longer needs payment."} Cancelled records keep their original dates and history. Archiving hides a record from the default list and preserves its balance impact.</p>{confirmCancel ? <div className="fr-inline-confirm"><p>Cancel this occurrence? {remainingAmount(entry, data.payments) > 0 ? "Its unpaid amount will leave the cash-flow forecast." : "Existing payment records will stay in your history."}{entry.series_id ? " Future repeats remain active unless you pause them above." : ""}</p><div className="fn-actions"><button className="fn-button small" type="button" disabled={action.pending} onClick={() => setConfirmCancel(false)}>Keep active</button><button className="fn-button small danger" type="button" disabled={action.pending} onClick={() => { void action.run(() => mutate("entry_status", { id: entry.id, status: "cancelled" }), onClose); }}>Confirm cancellation</button></div></div> : <div className="fn-actions">{entry.status === "active" ? <button className="fn-button small danger" type="button" disabled={action.pending} onClick={() => setConfirmCancel(true)}>Cancel {income ? "income" : "bill"}</button> : <button className="fn-button small" type="button" disabled={action.pending} onClick={() => { void action.run(() => mutate("entry_status", { id: entry.id, status: "active" }), onClose); }}>Restore active</button>}<button className="fn-button small" type="button" disabled={action.pending} onClick={() => { void action.run(() => mutate("entry_status", { id: entry.id, status: entry.status, archived: !entry.archived_at }), onClose); }}>{entry.archived_at ? "Unarchive" : "Archive record"}</button></div>}</div>}
+    {entry && entry.status !== "collections" && <div className="fr-editor-section"><h3>Record status</h3><p className="fn-muted fr-small">{income ? "Cancel income that will no longer arrive." : "Cancel a bill that no longer needs payment."} Cancelled records keep their original dates and history. Archiving hides a record from the default list and preserves its balance impact.</p>{confirmCancel ? <div className="fr-inline-confirm"><p>Cancel this occurrence? {remainingAmount(entry, data.payments) > 0 ? "Its unpaid amount will leave the cash-flow forecast." : "Existing payment records will stay in your history."}{entry.series_id ? " Future repeats remain active unless you pause them above." : ""}</p><div className="fn-actions"><button className="fn-button small" type="button" disabled={busy} onClick={() => setConfirmCancel(false)}>Keep active</button><button className="fn-button small danger" type="button" disabled={busy} onClick={() => { void action.run(() => mutate("entry_status", { id: entry.id, status: "cancelled" }), onClose); }}>Confirm cancellation</button></div></div> : <div className="fn-actions">{entry.status === "active" ? <button className="fn-button small danger" type="button" disabled={busy} onClick={() => setConfirmCancel(true)}>Cancel {income ? "income" : "bill"}</button> : <button className="fn-button small" type="button" disabled={busy} onClick={() => { void action.run(() => mutate("entry_status", { id: entry.id, status: "active" }), onClose); }}>Restore active</button>}<button className="fn-button small" type="button" disabled={busy} onClick={() => { void action.run(() => mutate("entry_status", { id: entry.id, status: entry.status, archived: !entry.archived_at }), onClose); }}>{entry.archived_at ? "Unarchive" : "Archive record"}</button></div>}</div>}
   </FinanceDialog>;
 }
 
@@ -303,12 +325,15 @@ export function PlanEditor({ data, month, today, mutate, onClose, accountScope, 
   const id = useRef(plan?.id ?? "");
   const vendor = useVendorFields(plan?.vendor_id);
   const action = useFormAction();
+  const tags = useFinanceTagField({ data, mutate, initialIds: plan?.tag_ids });
+  const busy = action.pending || tags.pending;
   const cents = parseMoney(total), prior = parseMoney(openingPaid), each = parseMoney(installment);
   const remaining = cents !== null && prior !== null ? cents - prior : 0;
   const count = each && remaining > 0 ? Math.ceil(remaining / each) : 0;
-  const close = () => { if (!action.pending) onClose(); };
+  const close = () => { if (!action.pending && !tags.isCreating()) onClose(); };
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (tags.isCreating()) return action.setError("Wait for the new tag to finish creating before saving.");
     if (!title.trim() || !creditor.trim()) return action.setError("Enter the plan name and the company you pay.");
     if (cents === null || cents <= 0 || prior === null || prior < 0 || each === null || each <= 0) return action.setError("Enter positive total and installment amounts. Already paid can be zero.");
     if (!plan && prior >= cents) return action.setError("The remaining balance must be greater than zero to create a payment schedule.");
@@ -316,29 +341,32 @@ export function PlanEditor({ data, month, today, mutate, onClose, accountScope, 
     let vendorPayload: VendorPayload;
     try { vendorPayload = vendor.payload(); }
     catch (cause) { return action.setError(cause instanceof Error ? cause.message : "Check the vendor name and website."); }
+    const tagIds = tags.prepareForSave();
+    if (tagIds === null) return;
     id.current ||= financeId();
-    void action.run(() => mutate("save_plan", { id: id.current, title: title.trim(), creditor: creditor.trim(), kind, category, total_amount_cents: cents, opening_paid_cents: prior, installment_amount_cents: each, frequency, first_due_date: firstDate, notes: notes.trim(), account_id: accountId, payment_method: method, reminder_days: reminderDays, ...vendorPayload }), onClose);
+    void action.run(() => mutate("save_plan", { id: id.current, title: title.trim(), creditor: creditor.trim(), kind, category, total_amount_cents: cents, opening_paid_cents: prior, installment_amount_cents: each, frequency, first_due_date: firstDate, notes: notes.trim(), tag_ids: tagIds, account_id: accountId, payment_method: method, reminder_days: reminderDays, ...vendorPayload }), onClose);
   }
   return <FinanceDialog title={plan ? "Manage payment plan" : "Add a payment plan"} onClose={close}>
     <form className="fn-stack fr-editor-form" onSubmit={submit}>
       <p className="fr-form-intro">Create an installment schedule once. Each payment appears as a bill across your calendar, Live Money, and monthly totals. Record or move individual payments as life changes.</p>
       {plan && <div className="fr-info"><Icon name="info" size={17} /><span>Your original amounts and frequency stay intact. Edit the plan details and payment defaults here. Record payments or move individual dates in the schedule.</span></div>}
-      <fieldset className="fr-fieldset" disabled={action.pending}><div className="fn-fields">
+      <fieldset className="fr-fieldset" disabled={busy}><div className="fn-fields">
         <label className="fn-field"><span>Plan name</span><input autoFocus required maxLength={160} value={title} onChange={event => setTitle(event.target.value)} placeholder="e.g. Car repair installments" /></label>
         <label className="fn-field"><span>Company / creditor</span><input required maxLength={160} value={creditor} onChange={event => setCreditor(event.target.value)} placeholder="Who you pay" /></label>
         <VendorFields data={data} vendor={vendor} help={plan ? "Changing this vendor updates every installment in the plan, including its recorded payment history." : "Attach a saved company and payment website to every installment in this plan."} />
+        <FinanceTagField field={tags} disabled={busy} help={plan ? "Changing plan tags updates installments that still match the old defaults; a different tag selection stays unchanged." : "Apply these tags to the plan and its generated installments. Individual installments can be retagged later."} />
         <AccountMethodFields data={data} kind="bill" accountId={accountId} setAccountId={setAccountId} originalAccountId={plan?.account_id} method={method} setMethod={setMethod} reminderDays={reminderDays} setReminderDays={setReminderDays} help={plan ? "Changing the account, method, or reminder updates active unpaid installments, including archived ones. Paid, cancelled, and transferred installments keep their defaults. Recorded payments keep their original account and method. Leaving a default unchanged preserves individual overrides." : "Use these defaults for the plan’s installments. You can override an individual installment later."} />
         <label className="fn-field"><span>Plan type</span><select value={kind} disabled={Boolean(plan)} onChange={event => setKind(event.target.value as FinancePlan["kind"])}><option value="installment">Installments</option><option value="payment_plan">Payment plan</option></select></label>
         <label className="fn-field"><span>Category</span><select value={category} disabled={Boolean(plan)} onChange={event => setCategory(event.target.value)}>{!FINANCE_CATEGORIES.some(item => item === category) && <option>{category}</option>}{FINANCE_CATEGORIES.map(item => <option key={item}>{item}</option>)}</select></label>
         <AmountInput label="Total agreed amount" value={total} onChange={setTotal} disabled={Boolean(plan)} hint="Include any agreed interest or fees in this total." />
         <AmountInput label="Already paid before tracking" value={openingPaid} onChange={setOpeningPaid} disabled={Boolean(plan)} hint="This advances the plan’s progress without deducting from this month’s cash." />
         <AmountInput label="Regular payment amount" value={installment} onChange={setInstallment} disabled={Boolean(plan)} />
-        <label className="fn-field"><span>Payment frequency</span><select value={frequency} disabled={Boolean(plan)} onChange={event => setFrequency(event.target.value as FinancePlan["frequency"])}><option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="monthly">Monthly</option></select></label>
+        <label className="fn-field"><span>Payment frequency</span><select value={frequency} disabled={Boolean(plan)} onChange={event => setFrequency(event.target.value as FinancePlan["frequency"])}><option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly · every 3 months</option></select></label>
         <label className="fn-field full"><span>First unpaid payment due</span><input type="date" required min="2000-01-01" max="2100-12-31" disabled={Boolean(plan)} value={firstDate} onChange={event => setFirstDate(event.target.value)} /></label>
         <NotesInput value={notes} onChange={setNotes} />
       </div></fieldset>
       {!plan && count > 0 && count <= 240 && <div className="fr-info"><Icon name="layers" size={17} /><span><strong>{count} {count === 1 ? "payment" : "payments"}</strong> will be created for <Money cents={remaining} /> remaining. The last payment is <Money cents={remaining - (count - 1) * (each ?? 0)} />.</span></div>}
-      <FormError message={action.error} /><div className="fn-actions end"><button className="fn-button" type="button" disabled={action.pending} onClick={close}>Cancel</button><button className="fn-button primary" type="submit" disabled={action.pending}>{action.pending ? "Saving…" : plan ? "Save plan details" : "Create payment schedule"}</button></div>
+      <FormError message={action.error} /><div className="fn-actions end"><button className="fn-button" type="button" disabled={busy} onClick={close}>Cancel</button><button className="fn-button primary" type="submit" disabled={busy}>{action.pending ? "Saving…" : tags.pending ? "Creating tag…" : plan ? "Save plan details" : "Create payment schedule"}</button></div>
     </form>
   </FinanceDialog>;
 }

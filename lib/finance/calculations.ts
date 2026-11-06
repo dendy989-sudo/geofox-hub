@@ -171,6 +171,12 @@ export function isPastDue(entry: FinanceEntry, payments: FinancePayment[], today
   return entry.status === "active" && entry.original_due_date < today && remainingAmount(entry, payments) > 0;
 }
 
+/** Whole calendar days since the original due date, independent of time zone or a moved payment date. */
+export function daysPastDue(entry: FinanceEntry, payments: FinancePayment[], today: string): number {
+  if (!validDay(today) || !validDay(entry.original_due_date) || !isPastDue(entry, payments, today)) return 0;
+  return Math.round((Date.parse(`${today}T12:00:00Z`) - Date.parse(`${entry.original_due_date}T12:00:00Z`)) / 86_400_000);
+}
+
 export function isMoved(entry: FinanceEntry): boolean {
   return entry.scheduled_date !== entry.original_due_date;
 }

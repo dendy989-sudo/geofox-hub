@@ -10,7 +10,7 @@ import { financeToday, reminderCount } from "@/lib/finance/reminders";
 import { EntryEditor, PaymentEditor, MoveEditor, PlanEditor, DebtEditor } from "./editors";
 import { BillsPanel, IncomePanel, PaymentsPanel, DebtsPanel } from "./records";
 import { OverviewPanel } from "./overview";
-import { VendorsPanel } from "./vendors";
+import { VendorsAndTagsPanel } from "./vendors-and-tags";
 import { AccountEditor, AccountsPanel, BalanceUpdateEditor, TransferEditor, accountScopeLabel } from "./accounts";
 import { SavingsPanel } from "./savings";
 import { RemindersPanel, useBillAlerts } from "./reminders";
@@ -33,7 +33,7 @@ const NAV: { id: string; label: string; icon: IconName; description: string }[] 
   { id: "accounts", label: "Banks & cards", icon: "card", description: "Know which account your money belongs to, and keep its balance in step." },
   { id: "savings", label: "Savings", icon: "target", description: "Give your savings a purpose, one goal and one milestone at a time." },
   { id: "payments", label: "Payments", icon: "layers", description: "Every installment and payment plan, with a clear view of your progress." },
-  { id: "vendors", label: "Vendors", icon: "globe", description: "Your companies, payment links, and recorded history, all in one place." },
+  { id: "vendors", label: "Vendors & tags", icon: "globe", description: "Keep payment links, vendor history, and your own groups of bills and income together." },
   { id: "credit", label: "Credit & collections", icon: "shield", description: "Organize debts, collectors, balance changes, and offers in one place." },
   { id: "reminders", label: "Reminders", icon: "bell", description: "See what needs your attention, with room to adjust the plan." },
   { id: "reports", label: "Reports", icon: "chart", description: "Understand your monthly commitments and the progress you’re making." },
@@ -138,7 +138,7 @@ export function FinanceWorkspace({ initialData, initialMonth }: { initialData: F
       case "bills": return <BillsPanel {...props} />;
       case "income": return <IncomePanel {...props} />;
       case "payments": return <PaymentsPanel {...props} />;
-      case "vendors": return <VendorsPanel {...props} />;
+      case "vendors": return <VendorsAndTagsPanel {...props} />;
       case "accounts": return <AccountsPanel {...props} editTransfer={transfer => setEditor({ type: "transfer", transfer })} />;
       case "savings": return <SavingsPanel {...props} />;
       case "reminders": return <RemindersPanel {...props} alerts={alerts} />;

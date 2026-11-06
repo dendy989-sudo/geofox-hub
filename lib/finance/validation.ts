@@ -1,5 +1,6 @@
 import { normalizeVendorUrl } from "./vendors.ts";
 import { normalizeResponsiblePeople } from "./debt-people.ts";
+import { normalizeTagName } from "./tags.ts";
 import { BILL_PAYMENT_METHODS, INCOME_PAYMENT_METHODS } from "./types.ts";
 
 /** Input checks are shared by the API and tests; never trust client ownership fields. */
@@ -65,6 +66,17 @@ function debtPeople(p: Record<string, unknown>): Record<string, unknown> {
   try { return { responsible_people: normalizeResponsiblePeople(p.responsible_people) }; }
   catch (error) { return fail(error instanceof Error ? error.message : "Enter valid household names."); }
 }
+function tagName(value: unknown): string {
+  try { return normalizeTagName(value); }
+  catch (error) { return fail(error instanceof Error ? error.message : "Enter a valid tag name."); }
+}
+function tagLinks(p: Record<string, unknown>): Record<string, unknown> {
+  if (p.tag_ids === undefined) return {}; // Older forms preserve saved tags.
+  if (!Array.isArray(p.tag_ids)) return fail("Choose tags as a list, or leave the list empty.");
+  const ids = [...new Set(p.tag_ids.map(value => uuid(value, "Tag")!.toLowerCase()))].sort();
+  if (ids.length > 20) return fail("Choose at most 20 tags for one record.");
+  return { tag_ids: ids };
+}
 function forecastFields(p: Record<string, unknown>, kind: "bill" | "income"): Record<string, unknown> {
   const fields = accountLink(p);
   if (p.payment_method !== undefined) fields.payment_method = choice(p.payment_method, kind === "bill" ? BILL_PAYMENT_METHODS : INCOME_PAYMENT_METHODS, "payment or receipt method");
@@ -89,9 +101,8 @@ function customRepeat(p: Record<string, unknown>, frequency: string, due: string
     return { custom_mode: mode, custom_month_days: days, custom_dates: [] };
   }
   if (!Array.isArray(p.custom_dates)) return fail("Choose the specific dates for this schedule.");
-  const dates = [...new Set(p.custom_dates.map(date => financeDate(date, "Custom date")!))].sort();
+  const dates = [...new Set([due, ...p.custom_dates.map(date => financeDate(date, "Custom date")!)])].sort();
   if (!dates.length || dates.length > 240) return fail("Choose between 1 and 240 specific dates, including the first due date.");
-  if (dates[0] !== due) return fail("Include the first due date as the earliest date in this schedule.");
   if (end && dates[dates.length - 1] > end) return fail("Every custom date must be on or before the repeat end date.");
   return { custom_mode: mode, custom_month_days: [], custom_dates: dates };
 }
@@ -124,12 +135,19 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
   let result: Record<string, unknown>;
   switch (action) {
     case "save_entry": {
-      const due = financeDate(p.original_due_date, "Original due date");
+      const originalDue = financeDate(p.original_due_date, "Original due date")!;
+      let due = originalDue;
+      let scheduled = financeDate(p.scheduled_date, "Scheduled date");
       const end = financeDate(p.end_date, "Repeat end date", true);
       if (end && due && end < due) return fail("The repeat end date must be on or after the first due date.");
-      const frequency = choice(p.frequency ?? "once", ["once", "weekly", "biweekly", "monthly", "yearly", "custom"], "repeat frequency");
+      const frequency = choice(p.frequency ?? "once", ["once", "weekly", "biweekly", "monthly", "quarterly", "yearly", "custom"], "repeat frequency");
       const kind = choice(p.kind, ["bill", "income"], "entry type");
-      result = { id: optionalId(), kind, title: text(p.title, "Title"), category: text(p.category, "Category", 80), expense_type: choice(p.expense_type ?? "bill", ["bill", "installment", "payment_plan"], "expense type"), amount_cents: cents(p.amount_cents, "Amount", 1), original_due_date: due, scheduled_date: financeDate(p.scheduled_date, "Scheduled date"), notes: text(p.notes, "Notes", 4000, false), frequency, end_date: end, ...customRepeat(p, frequency, due!, end), ...vendorLink(p), ...forecastFields(p, kind) };
+      const custom = customRepeat(p, frequency, due, end);
+      if (frequency === "custom" && custom.custom_mode === "specific_dates") {
+        due = (custom.custom_dates as string[])[0];
+        if (scheduled === originalDue) scheduled = due;
+      }
+      result = { id: optionalId(), kind, title: text(p.title, "Title"), category: text(p.category, "Category", 80), expense_type: choice(p.expense_type ?? "bill", ["bill", "installment", "payment_plan"], "expense type"), amount_cents: cents(p.amount_cents, "Amount", 1), original_due_date: due, scheduled_date: scheduled, notes: text(p.notes, "Notes", 4000, false), frequency, end_date: end, ...custom, ...vendorLink(p), ...forecastFields(p, kind), ...tagLinks(p) };
       break;
     }
     case "entry_status":
@@ -152,7 +170,7 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
       const installment = cents(p.installment_amount_cents, "Installment", 1)!;
       if (paid > total) return fail("Already paid cannot exceed the total balance.");
       if (Math.ceil((total - paid) / installment) > 240) return fail("A plan can include at most 240 installments. Increase the installment amount.");
-      result = { id: optionalId(), title: text(p.title, "Plan name"), creditor: text(p.creditor, "Creditor", 200), kind: choice(p.kind, ["installment", "payment_plan"], "plan type"), category: text(p.category, "Category", 80), total_amount_cents: total, opening_paid_cents: paid, installment_amount_cents: installment, frequency: choice(p.frequency, ["weekly", "biweekly", "monthly"], "frequency"), first_due_date: financeDate(p.first_due_date, "First due date"), notes: text(p.notes, "Notes", 4000, false), ...vendorLink(p), ...forecastFields(p, "bill") }; break;
+      result = { id: optionalId(), title: text(p.title, "Plan name"), creditor: text(p.creditor, "Creditor", 200), kind: choice(p.kind, ["installment", "payment_plan"], "plan type"), category: text(p.category, "Category", 80), total_amount_cents: total, opening_paid_cents: paid, installment_amount_cents: installment, frequency: choice(p.frequency, ["weekly", "biweekly", "monthly", "quarterly"], "frequency"), first_due_date: financeDate(p.first_due_date, "First due date"), notes: text(p.notes, "Notes", 4000, false), ...vendorLink(p), ...forecastFields(p, "bill"), ...tagLinks(p) }; break;
     }
     case "plan_status":
       result = { id: id(), status: choice(p.status, ["active", "cancelled"], "status") }; break;
@@ -160,6 +178,10 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
       result = { id: id(), name: vendorName(p.name), url: vendorUrl(p.url), notes: text(p.notes, "Vendor notes", 4000, false) }; break;
     case "vendor_status":
       result = { id: id(), archived: bool(p.archived, "Archive vendor") }; break;
+    case "save_tag":
+      result = { id: id(), name: tagName(p.name) }; break;
+    case "archive_tag":
+      result = { id: id(), archived: bool(p.archived, "Archive tag") }; break;
     case "save_account": {
       const kind = choice(p.kind, ["checking", "savings", "cash", "credit_card"], "account type");
       const lastFour = p.last_four === null || p.last_four === undefined || p.last_four === "" ? null : text(p.last_four, "Last four digits", 4);

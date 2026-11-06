@@ -35,6 +35,7 @@ test("moved bills use the planned date but keep the original overdue flag", () =
   const result = billReminders(fixture);
   assert.deepEqual(result.map(item => item.state), ["past_due", "today", "upcoming"]);
   assert.equal(result[2].original_past_due, true);
+  assert.equal(result[2].days_past_due, 21);
   assert.equal(result[2].entry.original_due_date, "2026-10-20");
 });
 
@@ -44,6 +45,37 @@ test("snooze suppresses the alert count until the chosen day without moving the 
   assert.equal(reminderCount(fixture), 0);
   assert.equal(billReminders(fixture, "2026-11-12")[0].state, "past_due");
   assert.equal(fixture.entries[0].scheduled_date, "2026-11-10");
+});
+
+test("overdue day labels preserve planned lead-time eligibility even when an older bill is moved far ahead", () => {
+  const fixture = data({ entries: [entry("moved", { original_due_date: "2026-10-20", scheduled_date: "2026-12-15" })] });
+  assert.equal(billReminders(fixture).length, 0);
+  assert.equal(reminderCount(fixture), 0);
+  const started = billReminders(fixture, "2026-12-12")[0];
+  assert.equal(started.state, "upcoming");
+  assert.equal(started.reminder_date, "2026-12-12");
+  assert.equal(started.days_past_due, 53);
+  assert.equal(started.original_past_due, true);
+});
+
+test("snoozing a partially paid overdue bill suppresses alerts without resetting its original overdue days", () => {
+  const fixture = data({ entries: [entry("late", { original_due_date: "2026-11-01", scheduled_date: "2026-11-10", reminder_snoozed_until: "2026-11-12" })], payments: [payment("partial", "late", 2500)] });
+  const snoozed = billReminders(fixture)[0];
+  assert.equal(snoozed.state, "snoozed");
+  assert.equal(snoozed.days_past_due, 9);
+  assert.equal(snoozed.remaining_cents, 7500);
+  assert.equal(reminderCount(fixture), 0);
+  const resumed = billReminders(fixture, "2026-11-12")[0];
+  assert.equal(resumed.state, "past_due");
+  assert.equal(resumed.days_past_due, 11);
+});
+
+test("planned dates earlier than the original obligation do not invent original overdue days", () => {
+  const fixture = data({ entries: [entry("early", { scheduled_date: "2026-11-09", original_due_date: "2026-11-15" })] });
+  const reminder = billReminders(fixture)[0];
+  assert.equal(reminder.state, "past_due");
+  assert.equal(reminder.original_past_due, false);
+  assert.equal(reminder.days_past_due, 0);
 });
 
 test("due-day-only reminders start on the bill date, not a day early", () => {

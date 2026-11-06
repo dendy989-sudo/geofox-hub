@@ -49,6 +49,12 @@ const legacyHouseholdSnapshot=await snapshot();
 const householdMigration=await readFile(new URL('../migrations/20261105201038_finance_debt_household_people.sql', import.meta.url), 'utf8');
 await db.exec(householdMigration);
 const migratedHouseholdSnapshot=await snapshot();
+const legacyTagSeries=entry({frequency:'monthly',end_date:'2026-03-31'}), legacyTagPlan=plan();
+await mutate('save_entry',legacyTagSeries); await mutate('save_plan',legacyTagPlan);
+const legacyTagsSnapshot=await snapshot();
+const tagsMigration=await readFile(new URL('../migrations/20261106012309_finance_tags_quarterly_history.sql', import.meta.url), 'utf8');
+await db.exec(tagsMigration);
+const migratedTagsSnapshot=await snapshot();
 async function one(sql, params = []) { return (await db.query(sql, params)).rows[0]; }
 async function mutate(action, payload, actor = owner, validate = true) {
   const p = validate ? validateFinanceMutation(action, payload).payload : payload;
@@ -59,6 +65,7 @@ async function denied(callback, code = 'P0001') { await assert.rejects(callback,
 function entry(extra = {}) { return {id:randomUUID(),kind:'bill',title:'Electricity',category:'Home',expense_type:'bill',amount_cents:10000,original_due_date:'2026-01-15',scheduled_date:'2026-01-15',notes:'',frequency:'once',...extra}; }
 function plan(extra = {}) { return {id:randomUUID(),title:'Car repair',creditor:'Repair shop',kind:'installment',category:'Car',total_amount_cents:10001,opening_paid_cents:1000,installment_amount_cents:3000,frequency:'monthly',first_due_date:'2026-01-31',notes:'',...extra}; }
 function debt(extra = {}) { return {id:randomUUID(),title:'Old account',stage:'credit_report',original_creditor:'Original company',collector:'Collector',original_balance_cents:10000,current_balance_cents:10000,status:'open',date_added:'2026-01-01',notes:'',...extra}; }
+function tag(extra = {}) { return {id:randomUUID(),name:`Tag ${randomUUID()}`,...extra}; }
 function vendor(extra = {}) { return {id:randomUUID(),name:`Vendor ${randomUUID()}`,url:'https://example.test/',notes:'',...extra}; }
 function account(extra = {}) { return {id:randomUUID(),name:'Daily checking',institution:'Example bank',kind:'checking',last_four:'1234',opening_date:'2026-01-01',opening_balance_cents:100000,credit_limit_cents:null,notes:'',...extra}; }
 function transfer(from,to,extra = {}) { return {id:randomUUID(),from_account_id:from,to_account_id:to,amount_cents:10000,date:'2026-01-15',status:'completed',notes:'',...extra}; }
@@ -71,12 +78,12 @@ test('migrations are repeatable under Supabase default grants, all tables use RL
   await db.exec(readonlyMigration);
   await db.exec(customVendorsMigration);
   await db.exec(accountsMigration);
-  await db.exec(householdMigration);
+  await db.exec(householdMigration); await db.exec(tagsMigration);
   assert.deepEqual((await db.query('select user_id from public.finance_access')).rows.map(r=>r.user_id), [owner]);
   const tables = (await db.query("select c.relname,c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relname like 'finance_%' and relkind='r'")).rows;
-  assert.equal(tables.length,16); assert.ok(tables.every(t=>t.relrowsecurity));
+  assert.equal(tables.length,17); assert.ok(tables.every(t=>t.relrowsecurity));
   const functions=(await db.query("select proname,prosecdef from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).rows;
-  assert.equal(functions.length,13); assert.ok(functions.every(f=>f.prosecdef===false));
+  assert.equal(functions.length,18); assert.ok(functions.every(f=>f.prosecdef===false));
   for (const role of ['anon','authenticated']) {
     assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and has_function_privilege($1,p.oid,'EXECUTE')",[role])).n,0);
   }
@@ -340,7 +347,7 @@ test('custom recurrence validation normalizes selections and rejects impossible 
   for (const days of [[],[0],[32],[1.5],['15'],[null],[1,31]]) assert.throws(()=>validateFinanceMutation('save_entry',{...monthly,custom_month_days:days}));
   const specific={...monthly,custom_mode:'specific_dates',custom_dates:['2026-02-03','2026-01-15','2026-02-03'],end_date:'2026-02-03'};
   assert.deepEqual(validateFinanceMutation('save_entry',specific).payload.custom_dates,['2026-01-15','2026-02-03']);
-  for (const dates of [[],['2026-02-03'],['2026-01-14','2026-01-15'],['2026-01-15','2026-02-04'],['2026-01-15','2026-02-30']]) {
+  for (const dates of [['2026-01-15','2026-02-04'],['2026-01-15','2026-02-30']]) {
     assert.throws(()=>validateFinanceMutation('save_entry',{...specific,custom_dates:dates}));
   }
   const tooMany=Array.from({length:241},(_,i)=>new Date(Date.UTC(2026,0,15+i,12)).toISOString().slice(0,10));
@@ -395,7 +402,7 @@ test('SQL validates custom schedules independently and rolls back inline vendors
   for (const days of [[],[0],[32],['15'],[null]]) {
     await assert.rejects(()=>mutate('save_entry',entry({frequency:'custom',custom_mode:'month_days',custom_month_days:days}),owner,false));
   }
-  for (const dates of [[],['2026-02-03'],['2026-01-14','2026-01-15'],['2026-01-15','2026-02-04'],['today']]) {
+  for (const dates of [['2026-01-15','2026-02-04'],['today']]) {
     await assert.rejects(()=>mutate('save_entry',entry({frequency:'custom',custom_mode:'specific_dates',custom_dates:dates,end_date:'2026-02-03'}),owner,false));
   }
   const tooMany=Array.from({length:241},(_,i)=>new Date(Date.UTC(2026,0,15+i,12)).toISOString().slice(0,10));
@@ -525,7 +532,7 @@ test('SQL rejects unsafe vendor URLs and treats SQL-like names and URLs as data'
 });
 
 test('custom/vendor migration can be reapplied with financial history and preserves private grants', async () => {
-  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); await db.exec(householdMigration); const after=await snapshot();
+  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); const after=await snapshot();
   assert.deepEqual(after,before);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_vendors','DELETE,TRUNCATE,TRIGGER,REFERENCES') granted")).granted,false);
@@ -540,7 +547,7 @@ test('account migration preserves legacy cash history and backfills reminders on
   assert.equal(p.account_id,null); assert.equal(p.payment_method,'manual'); assert.equal(p.amount_cents,2000);
   await mutate('save_entry',{...legacyBill,reminder_days:null});
   await mutate('save_entry',{...legacyIncome,reminder_days:5});
-  await db.exec(accountsMigration); await db.exec(householdMigration); s=await snapshot();
+  await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); s=await snapshot();
   assert.equal(s.entries.find(e=>e.id===legacyBill.id).reminder_days,null);
   assert.equal(s.entries.find(e=>e.id===legacyIncome.id).reminder_days,5);
   const a=account(); await mutate('save_account',a);
@@ -842,7 +849,7 @@ test('collection reversal restores cash to its recorded account even after the b
 });
 
 test('account migration is repeatable with posted cash and savings history, with least-privilege grants', async () => {
-  const before=await snapshot(); await db.exec(accountsMigration); await db.exec(householdMigration); const after=await snapshot(); assert.deepEqual(after,before);
+  const before=await snapshot(); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); const after=await snapshot(); assert.deepEqual(after,before);
   for(const table of ['finance_accounts','finance_transfers','finance_savings_goals','finance_goal_history']) {
     assert.equal((await one("select has_table_privilege('service_role',$1,'DELETE,TRUNCATE,REFERENCES,TRIGGER') granted",[`public.${table}`])).granted,false,table);
   }
@@ -993,8 +1000,221 @@ test('household labels never grant access or let another approved owner alter de
 });
 
 test('household migration is repeatable with assignments, shared collections and private grants intact', async () => {
-  const before=await snapshot(); await db.exec(householdMigration); assert.deepEqual(await snapshot(),before);
-  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,13);
+  const before=await snapshot(); await db.exec(householdMigration); await db.exec(tagsMigration); assert.deepEqual(await snapshot(),before);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,18);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
+});
+
+test('tag migration preserves existing finances and timestamps while adding only empty metadata', () => {
+  const {tags,...withoutNewFields}=migratedTagsSnapshot;
+  assert.deepEqual(tags,[]);
+  for(const collection of ['entries','series','plans']) {
+    assert.ok(withoutNewFields[collection].length>0);
+    withoutNewFields[collection]=withoutNewFields[collection].map(({tag_ids,...row})=>{assert.deepEqual(tag_ids,[]);return row;});
+  }
+  assert.deepEqual(withoutNewFields,legacyTagsSnapshot);
+});
+
+test('tag input validates normalized names and canonical unique UUID sets without replacing omitted tags', () => {
+  const ids=Array.from({length:20},()=>randomUUID()), expected=[...ids].sort();
+  assert.equal(validateFinanceMutation('save_tag',tag({name:'  Family\u00a0  budget  '})).payload.name,'Family budget');
+  assert.equal(validateFinanceMutation('save_tag',tag({name:'\u{10428}'.repeat(60)})).payload.name,'\u{10428}'.repeat(60));
+  assert.deepEqual(validateFinanceMutation('save_entry',entry({tag_ids:[...ids,ids[0].toUpperCase()]})).payload.tag_ids,expected);
+  assert.deepEqual(validateFinanceMutation('save_plan',plan({tag_ids:[...ids].reverse()})).payload.tag_ids,expected);
+  assert.equal(Object.hasOwn(validateFinanceMutation('save_entry',entry()).payload,'tag_ids'),false);
+  assert.equal(Object.hasOwn(validateFinanceMutation('save_plan',plan()).payload,'tag_ids'),false);
+  assert.deepEqual(validateFinanceMutation('save_entry',entry({tag_ids:[]})).payload.tag_ids,[]);
+  for(const name of [null,{},2,'','   ','A\nB','A\tB','A\u0085B','A\u2028B','A\u2029B','A'.repeat(61),'\u{10428}'.repeat(61)]) assert.throws(()=>validateFinanceMutation('save_tag',tag({name})),{name:'FinanceInputError'});
+  for(const tag_ids of [null,{},'tag',[null],[1],[{}],['not-an-id'],[...ids,randomUUID()]]) {
+    assert.throws(()=>validateFinanceMutation('save_entry',entry({tag_ids})),{name:'FinanceInputError'});
+    assert.throws(()=>validateFinanceMutation('save_plan',plan({tag_ids})),{name:'FinanceInputError'});
+  }
+  assert.throws(()=>validateFinanceMutation('archive_tag',{id:ids[0],archived:'yes'}));
+  const cleaned=validateFinanceMutation('save_tag',tag({user_id:secondOwner,archived_at:'2026-01-01'})).payload;
+  assert.equal(cleaned.user_id,undefined); assert.equal(cleaned.archived_at,undefined);
+});
+
+test('tag names are Unicode-normalized, case-insensitively unique per owner, renameable and restorable', async () => {
+  const suffix=randomUUID(), t=tag({name:`  Family\u00a0   budget ${suffix}  `});
+  await mutate('save_tag',t,owner,false);
+  let saved=(await snapshot()).tags.find(x=>x.id===t.id);
+  assert.equal(saved.name,`Family budget ${suffix}`);
+  await mutate('save_tag',{...t,name:saved.name}); assert.deepEqual((await snapshot()).tags.find(x=>x.id===t.id),saved,'Retrying an unchanged tag preserves timestamps');
+  await assert.rejects(()=>mutate('save_tag',tag({name:saved.name.toUpperCase()})),/already exists/);
+  await mutate('save_tag',tag({name:saved.name}),secondOwner);
+  await mutate('archive_tag',{id:t.id,archived:true});
+  assert.ok((await snapshot()).tags.find(x=>x.id===t.id).archived_at);
+  await assert.rejects(()=>mutate('save_tag',tag({name:saved.name})),/restore it if archived/);
+  await mutate('save_tag',{id:t.id,name:`Renamed ${suffix}`});
+  saved=(await snapshot()).tags.find(x=>x.id===t.id); assert.ok(saved.archived_at); assert.equal(saved.name,`Renamed ${suffix}`);
+  await mutate('archive_tag',{id:t.id,archived:false}); assert.equal((await snapshot()).tags.find(x=>x.id===t.id).archived_at,null);
+  await mutate('save_tag',tag({name:`ΟΣ ${suffix}`}));
+  await assert.rejects(()=>mutate('save_tag',tag({name:`ος ${suffix}`})),/already exists/);
+  await mutate('save_tag',tag({name:`İpek ${suffix}`})); await mutate('save_tag',tag({name:`Ipek ${suffix}`}));
+  const invalid=tag(); for(const name of [null,'','A\nB','A\u0085B','A\u2029B','A'.repeat(61)]) await denied(()=>mutate('save_tag',{...invalid,name},owner,false));
+});
+
+test('tags enforce owner membership, immutable identity and private least-privilege access at SQL boundaries', async () => {
+  const own=tag(),foreign=tag(); await mutate('save_tag',own); await mutate('save_tag',foreign,secondOwner);
+  const e=entry({frequency:'monthly',end_date:'2026-02-28',tag_ids:[own.id]}), p=plan({tag_ids:[own.id]});
+  await mutate('save_entry',e); await mutate('save_plan',p);
+  const series=(await snapshot()).entries.find(x=>x.id===e.id).series_id;
+  await denied(()=>mutate('save_entry',{...e,tag_ids:[foreign.id]}),'P0002');
+  await denied(()=>mutate('save_plan',{...p,tag_ids:[foreign.id]}),'P0002');
+  await denied(()=>mutate('save_tag',{id:foreign.id,name:'Hijacked'}),'P0002');
+  await denied(()=>mutate('archive_tag',{id:foreign.id,archived:true}),'P0002');
+  for(const [table,id] of [['finance_entries',e.id],['finance_series',series],['finance_plans',p.id]]) {
+    await denied(()=>db.query(`update public.${table} set tag_ids=array[$1::uuid] where id=$2`,[foreign.id,id]),'23503');
+  }
+  await denied(()=>db.query('update public.finance_tags set user_id=$1 where id=$2',[secondOwner,own.id]));
+  await denied(()=>db.query('update public.finance_tags set id=$1 where id=$2',[randomUUID(),own.id]));
+  assert.equal((await snapshot(secondOwner)).tags.some(x=>x.id===own.id),false);
+  for(const actor of [support,banned,unverified]) await denied(()=>mutate('save_tag',tag(),actor),'42501');
+  await db.exec('set role service_role');
+  try {
+    const serviceTag=tag(); await mutate('save_tag',serviceTag); await mutate('save_entry',entry({tag_ids:[serviceTag.id]}));
+    await denied(()=>db.query('delete from public.finance_tags where id=$1',[serviceTag.id]),'42501');
+    for(const privilege of ['DELETE','TRUNCATE','REFERENCES','TRIGGER']) assert.equal((await one("select has_table_privilege('service_role','public.finance_tags',$1) granted",[privilege])).granted,false,privilege);
+  } finally { await db.exec('reset role'); }
+  for(const role of ['anon','authenticated']) assert.equal((await one("select has_table_privilege($1,'public.finance_tags','SELECT,INSERT,UPDATE,DELETE') granted",[role])).granted,false);
+});
+
+test('bill and income tag edits preserve money and payment snapshots, keep omitted tags and clear explicit empty sets', async () => {
+  const first=tag(),second=tag(); await mutate('save_tag',first); await mutate('save_tag',second);
+  const bill=entry({tag_ids:[second.id,first.id,first.id]}),income=entry({kind:'income',tag_ids:[first.id]});
+  await mutate('save_entry',bill); await mutate('save_entry',income);
+  const payment={id:randomUUID(),entry_id:bill.id,amount_cents:2500,paid_on:'2026-01-15'}; await mutate('record_payment',payment);
+  const before=await snapshot(); assert.deepEqual(before.entries.find(x=>x.id===bill.id).tag_ids,[first.id,second.id].sort());
+  const {tag_ids,...olderForm}=bill; await mutate('save_entry',{...olderForm,notes:'Same tags from an older form'});
+  assert.deepEqual((await snapshot()).entries.find(x=>x.id===bill.id).tag_ids,[first.id,second.id].sort());
+  await mutate('save_entry',{...bill,tag_ids:[]}); await mutate('save_entry',{...income,tag_ids:[second.id]});
+  const after=await snapshot(); assert.deepEqual(after.entries.find(x=>x.id===bill.id).tag_ids,[]); assert.deepEqual(after.entries.find(x=>x.id===income.id).tag_ids,[second.id]);
+  assert.deepEqual(after.payments,before.payments);
+  for(const id of [bill.id,income.id]) for(const field of ['amount_cents','original_amount_cents','original_due_date','scheduled_date','status']) assert.equal(after.entries.find(x=>x.id===id)[field],before.entries.find(x=>x.id===id)[field]);
+  const history=(await db.query("select details from public.finance_entry_history where entry_id=$1 and action='edited' order by created_at desc",[bill.id])).rows;
+  assert.deepEqual(history[0].details.previous_tag_ids,[first.id,second.id].sort()); assert.deepEqual(history[0].details.tag_ids,[]);
+});
+
+test('archived tags remain on existing records and inherited schedules but cannot be newly assigned', async () => {
+  const t=tag(); await mutate('save_tag',t);
+  const e=entry({frequency:'monthly',end_date:'2026-03-31',tag_ids:[t.id]}); await mutate('save_entry',e);
+  const s=await snapshot(owner,'2026-01-31'), original=s.entries.find(x=>x.id===e.id);
+  await mutate('archive_tag',{id:t.id,archived:true});
+  assert.deepEqual((await snapshot(owner,'2026-01-31')).entries.find(x=>x.id===e.id),original,'Archiving only changes the tag record');
+  await mutate('save_entry',{...e,title:'Existing archived tag kept'});
+  await denied(()=>mutate('save_entry',entry({tag_ids:[t.id]})));
+  await denied(()=>mutate('save_plan',plan({tag_ids:[t.id]})));
+  const expanded=await snapshot(owner,'2026-03-31');
+  assert.equal(expanded.entries.filter(x=>x.series_id===original.series_id).length,3);
+  assert.ok(expanded.entries.filter(x=>x.series_id===original.series_id).every(x=>x.tag_ids.length===1 && x.tag_ids[0]===t.id));
+  await mutate('save_entry',{...e,tag_ids:[]}); await denied(()=>mutate('save_entry',e));
+  await mutate('archive_tag',{id:t.id,archived:false}); await mutate('save_entry',e);
+  assert.deepEqual((await snapshot()).entries.find(x=>x.id===e.id).tag_ids,[t.id]);
+});
+
+test('plan tag changes follow previous defaults across statuses while preserving customized children and cash', async () => {
+  const a=tag(),b=tag(),custom=tag(); for(const t of [a,b,custom]) await mutate('save_tag',t);
+  const p=plan({total_amount_cents:15000,opening_paid_cents:0,tag_ids:[a.id]}); await mutate('save_plan',p);
+  let children=(await snapshot()).entries.filter(x=>x.plan_id===p.id);
+  await mutate('record_payment',{id:randomUUID(),entry_id:children[0].id,amount_cents:3000,paid_on:'2026-01-15'});
+  await mutate('save_entry',{...children[1],tag_ids:[custom.id]});
+  await mutate('entry_status',{id:children[2].id,status:'cancelled'});
+  await mutate('transfer_collections',{entry_id:children[3].id,collector:'Installment collector'});
+  await mutate('entry_status',{id:children[4].id,status:'active',archived:true});
+  const before=await snapshot(); await mutate('save_plan',{...p,tag_ids:[b.id]}); const after=await snapshot();
+  children=after.entries.filter(x=>x.plan_id===p.id);
+  assert.deepEqual(after.plans.find(x=>x.id===p.id).tag_ids,[b.id]);
+  for(const child of children) assert.deepEqual(child.tag_ids,child.id===before.entries.filter(x=>x.plan_id===p.id)[1].id?[custom.id]:[b.id]);
+  assert.deepEqual(after.payments,before.payments); assert.deepEqual(after.debts,before.debts);
+  for(const child of children) for(const field of ['amount_cents','original_amount_cents','original_due_date','scheduled_date','status','archived_at','account_id','payment_method']) assert.equal(child[field],before.entries.find(x=>x.id===child.id)[field]);
+  const historyCount=(await one("select count(*)::int n from public.finance_entry_history h join public.finance_entries e on e.id=h.entry_id where e.plan_id=$1 and h.action='tags_changed'",[p.id])).n;
+  assert.equal(historyCount,4);
+  await mutate('save_plan',{...p,tag_ids:[b.id]}); const {tag_ids,...oldForm}=p; await mutate('save_plan',{...oldForm,notes:'Do not overwrite child labels'});
+  assert.equal((await one("select count(*)::int n from public.finance_entry_history h join public.finance_entries e on e.id=h.entry_id where e.plan_id=$1 and h.action='tags_changed'",[p.id])).n,historyCount);
+  assert.deepEqual((await snapshot()).entries.find(x=>x.id===children[1].id).tag_ids,[custom.id]);
+});
+
+test('series inherit tags through every expansion branch while occurrence edits remain local', async () => {
+  const a=tag(),b=tag(); await mutate('save_tag',a); await mutate('save_tag',b);
+  const repeats=[
+    entry({frequency:'weekly',tag_ids:[a.id],end_date:'2026-03-31'}),
+    entry({frequency:'custom',custom_mode:'month_days',custom_month_days:[15,31],tag_ids:[a.id],end_date:'2026-03-31'}),
+    entry({frequency:'custom',custom_mode:'specific_dates',custom_dates:['2026-01-15','2026-02-15','2026-03-15'],tag_ids:[a.id]})
+  ];
+  for(const e of repeats) {
+    await mutate('save_entry',e); const first=(await snapshot(owner,'2026-01-31')).entries.find(x=>x.id===e.id);
+    await mutate('save_entry',{...first,frequency:'once',tag_ids:[b.id]});
+    const s=await snapshot(owner,'2026-03-31'), children=s.entries.filter(x=>x.series_id===first.series_id);
+    assert.ok(children.length>1); assert.deepEqual(s.series.find(x=>x.id===first.series_id).tag_ids,[a.id]);
+    assert.deepEqual(children.find(x=>x.id===e.id).tag_ids,[b.id]); assert.ok(children.filter(x=>x.id!==e.id).every(x=>x.tag_ids.length===1 && x.tag_ids[0]===a.id));
+  }
+});
+
+test('quarterly bills, income and plans stay anchored through short months and leap years', async () => {
+  assert.deepEqual((await db.query("select public.finance_occurrence_date('2026-08-31','quarterly',n)::text d from generate_series(0,4) n")).rows.map(x=>x.d),['2026-08-31','2026-11-30','2027-02-28','2027-05-31','2027-08-31']);
+  assert.equal((await one("select public.finance_occurrence_date('2027-11-30','quarterly',1)::text d")).d,'2028-02-29');
+  const t=tag(); await mutate('save_tag',t);
+  for(const kind of ['bill','income']) {
+    const e=entry({kind,frequency:'quarterly',original_due_date:'2026-01-31',scheduled_date:'2026-01-31',end_date:'2027-01-31',tag_ids:[t.id]}); await mutate('save_entry',e);
+    const s=await snapshot(owner,'2027-02-28'), series=s.entries.find(x=>x.id===e.id).series_id;
+    assert.deepEqual(s.entries.filter(x=>x.series_id===series).map(x=>x.original_due_date),['2026-01-31','2026-04-30','2026-07-31','2026-10-31','2027-01-31']);
+    assert.ok(s.entries.filter(x=>x.series_id===series).every(x=>x.tag_ids[0]===t.id));
+  }
+  const p=plan({frequency:'quarterly',tag_ids:[t.id]}); await mutate('save_plan',p);
+  let children=(await snapshot()).entries.filter(x=>x.plan_id===p.id);
+  assert.deepEqual(children.map(x=>x.original_due_date),['2026-01-31','2026-04-30','2026-07-31','2026-10-31']);
+  assert.equal(children.reduce((sum,x)=>sum+x.amount_cents,0),9001); assert.equal(children.at(-1).amount_cents,1);
+  await mutate('move_entry',{id:children[1].id,scheduled_date:'2026-05-08'});
+  children=(await snapshot(owner,'2027-12-31')).entries.filter(x=>x.plan_id===p.id);
+  assert.equal(children[1].original_due_date,'2026-04-30'); assert.equal(children[1].scheduled_date,'2026-05-08'); assert.equal(children.length,4);
+});
+
+test('earlier custom input includes the entered first date and canonicalizes due dates without losing explicit moves', () => {
+  const e=entry({frequency:'custom',custom_mode:'specific_dates',original_due_date:'2026-11-15',scheduled_date:'2026-11-15',custom_dates:['2026-09-15','2026-07-15','2026-09-15'],end_date:'2026-11-15'});
+  const clean=validateFinanceMutation('save_entry',e).payload;
+  assert.deepEqual(clean.custom_dates,['2026-07-15','2026-09-15','2026-11-15']); assert.equal(clean.original_due_date,'2026-07-15'); assert.equal(clean.scheduled_date,'2026-07-15');
+  assert.equal(validateFinanceMutation('save_entry',{...e,scheduled_date:'2026-11-22'}).payload.scheduled_date,'2026-11-22');
+  assert.deepEqual(validateFinanceMutation('save_entry',{...e,custom_dates:[]}).payload.custom_dates,['2026-11-15']);
+  for(const change of [{custom_dates:null},{custom_dates:['1999-12-31']},{custom_dates:['2026-02-30']},{end_date:'2026-10-31'},{custom_dates:['2026-12-15']}]) assert.throws(()=>validateFinanceMutation('save_entry',{...e,...change}));
+  const twoForty=Array.from({length:240},(_,i)=>new Date(Date.UTC(2026,0,1+i,12)).toISOString().slice(0,10));
+  assert.throws(()=>validateFinanceMutation('save_entry',{...e,custom_dates:twoForty,end_date:null}),/240/,'The original chosen date consumes a slot if it is not in the date list');
+});
+
+test('earlier custom SQL creation and retries produce one tagged unpaid history with immutable occurrence dates', async () => {
+  const t=tag(); await mutate('save_tag',t);
+  const e=entry({frequency:'custom',custom_mode:'specific_dates',original_due_date:'2026-11-15',scheduled_date:'2026-11-15',custom_dates:['2026-09-15','2026-07-15'],tag_ids:[t.id],end_date:'2026-11-15'});
+  await mutate('save_entry',e,owner,false); let s=await snapshot(), first=s.entries.find(x=>x.id===e.id),series=s.series.find(x=>x.id===first.series_id);
+  assert.equal(first.original_due_date,'2026-07-15'); assert.equal(first.scheduled_date,'2026-07-15'); assert.equal(series.start_date,'2026-07-15');
+  assert.deepEqual(series.custom_dates,['2026-07-15','2026-09-15','2026-11-15']);
+  let children=s.entries.filter(x=>x.series_id===series.id); assert.equal(children.length,3); assert.ok(children.every(x=>x.status==='active' && x.tag_ids[0]===t.id));
+  assert.equal(s.payments.filter(x=>children.some(e=>e.id===x.entry_id)).length,0);
+  await mutate('save_entry',e,owner,false); await mutate('save_entry',e); s=await snapshot();
+  assert.equal(s.series.filter(x=>x.id===series.id).length,1); assert.equal(s.entries.filter(x=>x.series_id===series.id).length,3);
+  const oldChild=s.entries.find(x=>x.series_id===series.id && x.original_due_date==='2026-09-15');
+  await mutate('move_entry',{id:oldChild.id,scheduled_date:'2026-11-20'});
+  await denied(()=>mutate('save_entry',{...oldChild,original_due_date:'2026-09-16'}));
+  children=(await snapshot()).entries.filter(x=>x.series_id===series.id); assert.equal(children.find(x=>x.id===oldChild.id).scheduled_date,'2026-11-20');
+  const moved=entry({...e,id:randomUUID(),scheduled_date:'2026-11-22'}); await mutate('save_entry',moved,owner,false);
+  assert.equal((await snapshot()).entries.find(x=>x.id===moved.id).scheduled_date,'2026-11-22');
+});
+
+test('tag and recurrence failures leave no partial series, plans or altered financial state', async () => {
+  const t=tag(); await mutate('save_tag',t);
+  const before=await snapshot();
+  await denied(()=>mutate('save_entry',entry({frequency:'monthly',tag_ids:[randomUUID()]})),'P0002');
+  await denied(()=>mutate('save_plan',plan({frequency:'quarterly',first_due_date:'2100-10-31',tag_ids:[t.id]})),'23514');
+  await denied(()=>mutate('save_entry',entry({frequency:'custom',custom_mode:'specific_dates',original_due_date:'2026-11-15',scheduled_date:'2026-11-15',custom_dates:['2026-07-15'],end_date:'2026-10-31',tag_ids:[t.id]}),owner,false));
+  await denied(()=>mutate('save_entry',entry({tag_ids:[null]}),owner,false));
+  assert.deepEqual(await snapshot(),before);
+  const ownIds=[]; for(let i=0;i<21;i++) {const next=tag(); await mutate('save_tag',next); ownIds.push(next.id);}
+  await denied(()=>mutate('save_entry',entry({tag_ids:ownIds}),owner,false));
+});
+
+test('tag migration reapplication preserves quarterly schedules, archived links, customized installments and money', async () => {
+  const before=await snapshot(); await db.exec(tagsMigration); assert.deepEqual(await snapshot(),before);
+  assert.equal((await one("select count(*)::int n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relname like 'finance_%'")).n,17);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%'")).n,18);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
+  assert.equal((await one("select has_table_privilege('service_role','public.finance_tags','DELETE,TRUNCATE,REFERENCES,TRIGGER') granted")).granted,false);
 });
