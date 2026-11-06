@@ -2,12 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "installCommand": "npm ci",
-  "buildCommand": "npm run build",
+  "buildCommand": "node scripts/verify-alfred-provider.mjs --confirm-provider-test && npm run build",
   "crons": [
-    {
-      "path": "/api/alfred/cron",
-      "schedule": "0 13 * * *"
-    }
+    { "path": "/api/alfred/cron", "schedule": "0 13 * * *" }
   ]
 }
-
