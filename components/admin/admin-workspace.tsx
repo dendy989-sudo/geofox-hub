@@ -17,15 +17,17 @@ import "@/app/admin/admin.css";
 import "@/components/workspace/workspace.css";
 import "@/components/workspace/responsive-print.css";
 
+const AlfredPanel = dynamic(() => import("@/components/alfred/alfred").then((module) => module.AlfredPanel), { loading: () => <Loading /> });
 const TasksPanel = dynamic(() => import("@/components/workspace/tasks").then((module) => module.TasksPanel), { loading: () => <Loading /> });
 const MarketingPanel = dynamic(() => import("@/components/workspace/marketing").then((module) => module.MarketingPanel), { loading: () => <Loading /> });
 const LegalPanel = dynamic(() => import("@/components/workspace/legal").then((module) => module.LegalPanel), { loading: () => <Loading /> });
 const AccountingPanel = dynamic(() => import("@/components/workspace/accounting").then((module) => module.AccountingPanel), { loading: () => <Loading /> });
 const ProfilePanel = dynamic(() => import("@/components/workspace/profile").then((module) => module.ProfilePanel), { loading: () => <Loading /> });
 
-type Area = "admin" | "marketing" | "tasks" | "legal" | "accounting" | "profile";
+type Area = "alfred" | "admin" | "marketing" | "tasks" | "legal" | "accounting" | "profile";
 interface NavItem { id: string; label: string; icon: IconName; capability?: string; group?: "manage"; }
 const navigation: Record<Area, NavItem[]> = {
+  alfred: [{ id: "command", label: "Command center", icon: "bolt" }, { id: "approvals", label: "Approvals", icon: "checklist" }, { id: "activity", label: "Activity", icon: "clock" }, { id: "knowledge", label: "Knowledge", icon: "book" }, { id: "controls", label: "Controls", icon: "settings" }],
   admin: [
     { id: "overview", label: "Overview", icon: "grid", capability: "overview:read" },
     { id: "customers", label: "Customers", icon: "users", capability: "customers:read" },
@@ -66,6 +68,7 @@ const navigation: Record<Area, NavItem[]> = {
   ],
 };
 const areas: { id: Area; label: string; icon: IconName }[] = [
+  { id: "alfred", label: "Alfred", icon: "bolt" },
   { id: "admin", label: "Admin", icon: "grid" },
   { id: "marketing", label: "Marketing", icon: "megaphone" },
   { id: "tasks", label: "Tasks", icon: "checklist" },
@@ -73,6 +76,7 @@ const areas: { id: Area; label: string; icon: IconName }[] = [
   { id: "accounting", label: "Accounting", icon: "wallet" },
 ];
 const areaNotes: Record<Area, { title: string; text: string }> = {
+  alfred: { title: "Meet Alfred", text: "Private investigations, clear proposals, and owner-approved actions." },
   admin: { title: "A home for every app.", text: "Customers, support, and app health, together in one place." },
   marketing: { title: "Make room to create.", text: "Plan your content, preview your feed, and learn what connects." },
   tasks: { title: "A little more organized.", text: "Turn company plans into clear, manageable next steps." },
@@ -101,6 +105,7 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
   const can = (capability: string) => preview || Boolean(bootstrap.data?.capabilities.some((available) => available === capability));
   const visibleAreas = areas.filter((area) => {
     if (preview) return true;
+    if (area.id === "alfred") return bootstrap.data?.staff.role === "owner";
     if (area.id === "admin") return navigation.admin.some((item) => item.capability && can(item.capability));
     if (area.id === "profile") return true;
     const companyAccess = bootstrap.data?.workspaceAccess?.[area.id].companyLevel;
@@ -109,9 +114,9 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
   const activeArea = route.area === "profile" || visibleAreas.some((area) => area.id === route.area) ? route.area : visibleAreas[0]?.id || "profile";
   const allowedNavigation = navigation[activeArea].filter((item) => !item.capability || can(item.capability));
   const current = allowedNavigation.find((item) => item.id === route.tab) || allowedNavigation[0];
-  const isCompanyWorkspace = activeArea !== "admin" && activeArea !== "profile";
+  const isCompanyWorkspace = activeArea !== "admin" && activeArea !== "profile" && activeArea !== "alfred";
   const companyLevel = isCompanyWorkspace ? bootstrap.data?.workspaceAccess?.[activeArea].companyLevel : "none";
-  const companyScopeAllowed = isCompanyWorkspace && (preview || companyLevel === "read" || companyLevel === "write");
+  const companyScopeAllowed = (activeArea === "alfred" && (preview || bootstrap.data?.staff.role === "owner")) || (isCompanyWorkspace && (preview || companyLevel === "read" || companyLevel === "write"));
   const currentApp = app === "company" && companyScopeAllowed ? "company" : apps.some((item) => item.slug === app) ? app : "all";
   const displayName = preview ? "Workspace preview" : bootstrap.data?.staff.displayName || bootstrap.data?.user.email || "Staff workspace";
   const initials = preview ? "G" : displayName.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((name) => name[0]).join("").toUpperCase();
@@ -170,6 +175,7 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
   };
   const props: PanelProps = { preview, app: currentApp, apps, refreshKey, staffRole: bootstrap.data?.staff.role, workspaceAccess: bootstrap.data?.workspaceAccess, notify: setToast, can: scopedCan, navigate };
   function panel() {
+    if (activeArea === "alfred") return <AlfredPanel key={`alfred-${currentApp}`} {...props} tab={current?.id || "command"} />;
     if (!current) return <Empty icon="lock" title="No sections are assigned" description="Ask an owner to review your workspace access." />;
     if (activeArea === "tasks") return <TasksPanel key={`tasks-${currentApp}`} {...props} view={current.id} />;
     if (activeArea === "marketing") return <MarketingPanel key={`marketing-${currentApp}`} {...props} view={current.id} />;
@@ -220,3 +226,4 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
     {toast ? <div className="hub-toast" role="status"><Icon name="info" size={17} /><span>{toast}</span><button className="hub-toast-close" type="button" aria-label="Dismiss notification" onClick={() => setToast("")}><Icon name="close" size={14} /></button></div> : null}
   </div>;
 }
+

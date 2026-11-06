@@ -215,7 +215,7 @@ export async function updateTicket(context: HubContext, id: string, patch: { sta
   return getTicket(context, id);
 }
 
-export async function addTicketMessage(context: HubContext, id: string, input: { body: string; internal: boolean; deliveryStatus?: "not_requested" | "pending"; requestId: string }): Promise<TicketMessage> {
+export async function addTicketMessage(context: HubContext, id: string, input: { body: string; internal: boolean; deliveryStatus?: "not_requested" | "pending"; requestId: string; alfredActionId?: string }): Promise<TicketMessage> {
   assertCapability(context, "tickets:write"); requireId(id);
   if (typeof input.internal !== "boolean") throw new HubError(400, "INVALID_INPUT", "Choose an internal note or a customer reply.");
   requireId(input.requestId);
@@ -223,8 +223,9 @@ export async function addTicketMessage(context: HubContext, id: string, input: {
   if (!body || body.length > 12000) throw new HubError(400, "INVALID_INPUT", "Enter a message of 1–12,000 characters.");
   const deliveryStatus = checkMember(input.deliveryStatus || "not_requested", ["not_requested", "pending"], "delivery status");
   const db = getHubService();
-  const { data: result, error } = await db.rpc("hub_add_ticket_message_once", { p_actor: context.user.id, p_ticket: id,
+  const { data: result, error } = await db.rpc(input.alfredActionId ? "hub_alfred_add_ticket_message_once" : "hub_add_ticket_message_once", { ...(input.alfredActionId ? { p_action: input.alfredActionId } : {}), p_actor: context.user.id, p_ticket: id,
     p_body: body, p_internal: input.internal, p_delivery_status: deliveryStatus, p_request: input.requestId });
+  if (input.alfredActionId && error?.code === "40001") throw new HubError(409, "TICKET_CHANGED", "The conversation changed. Generate and review a new reply before sending.");
   if (error?.code === "P0101") throw new HubError(409, "IDEMPOTENCY_CONFLICT", "This retry has different content. Refresh the ticket before sending another message.");
   if (error) databaseError(error);
   if (!result?.id) throw new HubError(503, "DATABASE_UNAVAILABLE", "We could not confirm your message was saved. Keep the same message and try again.");
@@ -408,3 +409,4 @@ export async function setTicketDelivery(context: HubContext, ticketId: string, m
   const { error } = await getHubService().rpc("hub_set_ticket_delivery", { p_actor: context.user.id, p_ticket: ticketId, p_message: messageId, p_status: status });
   if (error) databaseError(error, "The reply delivery result could not be saved. Check the provider before retrying to avoid duplicate mail.");
 }
+
