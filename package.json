@@ -11,18 +11,21 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/error-collection.mjs supabase/tests/telemetry-connection.test.mjs && node --test tests/isbn-reporting.mjs && node tests/security.mjs && node --test tests/home-auth-return.mjs && node --test tests/ticket-read-receipt.mjs && node supabase/tests/central.test.mjs && node integrations/novanook/verify-bridge.mjs && node tests/customer-support-auth.mjs && node tests/support-inbox.mjs && node supabase/tests/customer-support.test.mjs && node integrations/novanook/verify-customer-identity.mjs && npm run test:workspace && npm run test:marketing && npm run test:finance",
+    "test": "node --test tests/error-collection.mjs supabase/tests/telemetry-connection.test.mjs && node --test tests/isbn-reporting.mjs && node tests/security.mjs && node --test tests/home-auth-return.mjs && node --test tests/ticket-read-receipt.mjs && node supabase/tests/central.test.mjs && node integrations/novanook/verify-bridge.mjs && node tests/customer-support-auth.mjs && node tests/support-inbox.mjs && node supabase/tests/customer-support.test.mjs && node integrations/novanook/verify-customer-identity.mjs && npm run test:workspace && npm run test:marketing && npm run test:finance && npm run test:alfred",
     "test:workspace": "node --test tests/workspace-*.mjs",
     "test:marketing": "node --test tests/marketing.mjs",
-    "test:finance": "node --test tests/finance-calculations.mjs tests/finance-vendors.mjs tests/finance-reminders.mjs tests/finance-debt-people.mjs tests/finance-tags.mjs supabase/tests/finance.test.mjs"
+    "test:finance": "node --test tests/finance-calculations.mjs tests/finance-vendors.mjs tests/finance-reminders.mjs tests/finance-debt-people.mjs tests/finance-tags.mjs supabase/tests/finance.test.mjs",
+    "test:alfred": "node --test tests/alfred-*.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.118.0",
+    "ai": "7.0.163",
     "next": "16.4.4",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "server-only": "0.0.1"
+    "server-only": "0.0.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.14",
@@ -32,3 +35,4 @@
     "typescript": "~5.9.3"
   }
 }
+
