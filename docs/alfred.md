@@ -28,7 +28,7 @@ All Alfred tables have RLS enabled and no browser-role privileges. Only server-s
 
 The model receives no executable tools. Customer messages, knowledge and logs are data, not authority. Identifiers/secrets are redacted and fields minimized; imperfect redaction is disclosed. Attachments, private household finances, full profiles and credentials are excluded. Owner-entered requests can still contain personal data, so avoid entering it. Customer support text can contain personal information, including from younger users. Provider terms, notices and retention need owner review before activation. Private evidence/output retention is currently indefinite; a retention/deletion workflow is not included.
 
-Runs are idempotent by request UUID and payload hash. A settings-row lock serializes budget reservations and limits concurrency to two active runs, with ten starts per five minutes. Each generation reserves 25 cents. Model catalog pricing is checked against ceilings before a bounded 60KB prompt and a maximum 3,500 output tokens, with no automatic SDK retries. Completed requests use a conservative cent-rounded token estimate; failed/uncertain requests retain the reservation. These are request guardrails, not invoices or caps on database/hosting/provider fees. Usage windows are UTC. No unlimited agent loops.
+Runs are idempotent by request UUID and payload hash. A settings-row lock serializes budget reservations and limits concurrency to two active runs, with ten starts per five minutes. Each generation reserves 25 cents. Model catalog pricing is checked against ceilings before a bounded 60KB prompt and a maximum 3,500 output tokens, with no automatic SDK retries. Completed requests use a conservative cent-rounded token estimate; confirmed zero-provider-attempt failures release the reservation; uncertain failures retain it. These are request guardrails, not invoices or caps on database/hosting/provider fees. Usage windows are UTC. No unlimited agent loops.
 
 Proposals expire after seven days and are never editable through approval requests. Approval claims are atomic and one-shot. For support replies, a database transaction locks the ticket and verifies the exact body, app and captured update timestamp before insertion. Delivery attempts reuse the existing idempotent ticket/provider mechanism. Changed tickets require a new investigation. A failure or interruption leaves `needs_review`/`executing`, never a blind automatic resend. Inspect the existing record/provider before manually taking further action.
 
@@ -45,4 +45,13 @@ Pause Alfred in Controls first; retain tables and audit records. Roll back to th
 ## Verified release checks
 
 On November 6, 2026: production build, TypeScript and complete repository test command passed, including 15 Alfred database/authorization tests. Chromium preview smoke checks passed at 1440px, 430px and 375px widths across all five Alfred sections, with no client errors, horizontal overflow or private API calls from preview. These are not a signed-in production end-to-end test or a verified model generation.
+
+
+## First-run access diagnostic — November 6, 2026
+
+A synthetic request using the existing GPT-5.4 mini model authenticated through project OIDC. The credit lookup reported a $5 balance and zero total usage, but the generation was rejected with HTTP 403: free-tier users do not have access to this model. Gateway routing reported zero provider attempts. The initial UI hid that specific denial because Gateway wraps the underlying API error.
+
+The repair classifies nested Gateway errors, returns fixed actionable messages, stores only sanitized diagnostic fields, and releases internal allowances only when no call started or Gateway explicitly confirms zero provider attempts. It does not change the chosen model, purchase credits, enable auto-top-up, or weaken approvals. The owner must add paid AI Gateway credits in the owning Vercel team's AI Gateway credit-balance dialog before retrying this model. A successful full Alfred generation remains to be verified after that account change.
+
+The synthetic diagnostic is manually invoked with an explicit confirmation flag. Normal build and cron commands do not call it.
 

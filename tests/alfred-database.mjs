@@ -52,6 +52,7 @@ const auditCount=async()=>Number((await one('select count(*) as n from public.hu
 
 
 await db.exec(await readFile(new URL('../supabase/migrations/20261106135856_alfred_operations.sql',import.meta.url),'utf8'));
+await db.exec(await readFile(new URL('../supabase/migrations/20261106170049_alfred_failure_diagnostics.sql',import.meta.url),'utf8'));
 const begin=(actor=owner,opts={})=>rpc('hub_alfred_begin',[actor,opts.id??randomUUID(),opts.scope??'novanook','briefing','Review current issues',opts.hash??'a'.repeat(64)]);
 const config=async(enabled=true,opts={})=>{const s=await one('select * from public.hub_alfred_settings');return rpc('hub_alfred_configure',[owner,s.version,enabled,opts.consent??true,opts.daily??500,opts.monthly??2500,opts.scheduled??false]);};
 const finish=(id,actions=[])=>rpc('hub_alfred_finish',[owner,id,JSON.stringify({report:'Reviewed records.',limitations:[],proposals:[]}),JSON.stringify([]),JSON.stringify(actions),1000,300,0.0021,null]);
@@ -145,5 +146,15 @@ test('a customer update invalidates a previously approved draft before insert',a
  await denied(()=>rpc('hub_alfred_add_ticket_message_once',[owner,action.id,ticket.id,'Old draft',false,'not_requested',action.id]),'40001');
  assert.equal(Number((await one('select count(*) as n from public.hub_ticket_messages where ticket_id=$1',[ticket.id])).n),0);
 });
+test('confirmed pre-provider failures release their allowance but uncertain failures retain it',async()=>{
+ await reset();const a=await begin();
+ await rpc('hub_alfred_finish',[owner,a.run.id,null,'[]','[]',0,0,0,'Provider confirmed zero attempts']);
+ assert.equal((await one('select budget_cents from public.hub_alfred_runs where id=$1',[a.run.id])).budget_cents,0);
+ const b=await begin();await rpc('hub_alfred_finish',[owner,b.run.id,null,'[]','[]',null,null,null,'Unknown provider outcome']);
+ assert.equal((await one('select budget_cents from public.hub_alfred_runs where id=$1',[b.run.id])).budget_cents,25);
+ const c=await begin();await rpc('hub_alfred_finish',[owner,c.run.id,null,'[]','[]',100,50,0,'Known provider usage']);
+ assert.equal((await one('select budget_cents from public.hub_alfred_runs where id=$1',[c.run.id])).budget_cents,25);
+});
 test.after(()=>db.close());
+
 
