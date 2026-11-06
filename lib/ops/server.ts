@@ -10,7 +10,7 @@ import { parseSocialConnections,findSocialConnection,supportsDirectPublishing,ve
 import { publishMarketingPost } from '@/lib/workspace/marketing-server';
 import { getWorkspaceRecord } from '@/lib/workspace/server';
 import type { MarketingPost } from '@/lib/workspace/marketing-types';
-import { stableId,sensitiveCase,parseVercelCharges,boundedText } from './policy';
+import { stableId,sensitiveCase,readVercelCharges,boundedText } from './policy';
 export const db=()=>getHubService();
 export function check(e:{code?:string}|null){if(e?.code==='40001')throw new HubError(409,'WORKFLOW_CHANGED','This item changed or was already claimed. Refresh and review again.');if(e)databaseError(e);}
 export async function rpc<T>(name:string,p:Record<string,unknown>):Promise<T>{const r=await db().rpc(name,p);check(r.error);return r.data as T;}
@@ -38,9 +38,9 @@ export async function getOperations(c:HubContext){
  return {settings:rows[0].data,jobs:rows[1].data,checks:rows[2].data,inbound:rows[3].data,repairs:rows[4].data,posts:rows[5].data,services:rows[6].data,connections:readiness(),accounts:socialConnections().map(a=>({appSlug:a.appSlug,platform:a.platform,accountId:a.accountId,handle:a.handle})),apps:c.apps};
 }
 export async function syncBilling(force=false){
- const prior=await db().from('hub_ops_checks').select('key,checked_at').in('key',['vercel-billing','github-billing']);check(prior.error);
+ const prior=await db().from('hub_ops_checks').select('key,checked_at,state').in('key',['vercel-billing','github-billing']);check(prior.error);
  for(const provider of ['vercel-billing','github-billing']){
- if(!force&&prior.data?.some(p=>p.key===provider&&Date.now()-Date.parse(p.checked_at)<3600000))continue;
+ if(!force&&prior.data?.some(p=>p.key===provider&&p.state==='verified'&&Date.now()-Date.parse(p.checked_at)<3600000))continue;
  const key=provider==='vercel-billing'?process.env.VERCEL_ACCESS_TOKEN:process.env.GITHUB_BILLING_TOKEN;
  if(!key){await recordCheck(provider,'blocked','A server-side billing credential is required. No usage or cost is assumed.');continue;}
  try{
@@ -49,15 +49,15 @@ export async function syncBilling(force=false){
   if(!process.env.VERCEL_TEAM_ID)throw new Error('Team missing');
   url=`https://api.vercel.com/v1/billing/charges?teamId=${encodeURIComponent(process.env.VERCEL_TEAM_ID)}&from=${month}-01T00:00:00.000Z&to=${new Date().toISOString()}`;
  }else url=`https://api.github.com/users/dendy989-sudo/settings/billing/usage?year=${now.getUTCFullYear()}&month=${now.getUTCMonth()+1}`;
- const r=await fetch(url,{headers:{Authorization:`Bearer ${key}`,Accept:provider==='vercel-billing'?'application/x-ndjson':'application/vnd.github+json','X-GitHub-Api-Version':'2026-03-10'},cache:'no-store',redirect:'error',signal:AbortSignal.timeout(12000)});
+ const r=await fetch(url,{headers:{Authorization:`Bearer ${key}`,Accept:provider==='vercel-billing'?'application/x-ndjson':'application/vnd.github+json','X-GitHub-Api-Version':'2026-03-10'},cache:'no-store',redirect:'error',signal:AbortSignal.timeout(30000)});
  if(!r.ok){await recordCheck(provider,'failed',`Provider returned HTTP ${r.status}. Check billing permissions. Previous costs are not replaced with invented zero values.`);continue;}
- const raw=await boundedText(r,3000000);let report:Record<string,unknown>;
- if(provider==='vercel-billing')report=parseVercelCharges(raw);else{
- const parsed=JSON.parse(raw);if(!Array.isArray(parsed.usageItems)||parsed.usageItems.length>20000)throw new Error('Unexpected billing format');
+ let report:Record<string,unknown>;
+ if(provider==='vercel-billing')report=await readVercelCharges(r);else{
+ const parsed=JSON.parse(await boundedText(r,3000000));if(!Array.isArray(parsed.usageItems)||parsed.usageItems.length>20000)throw new Error('Unexpected billing format');
  const rows=parsed.usageItems;let net=0;for(const item of rows){if(!Number.isFinite(item.netAmount))throw new Error('Incomplete usage amount');net+=item.netAmount;}
  report={netUsd:net,returnedRows:rows.length,usage:rows.slice(0,100).map((p:Record<string,unknown>)=>({product:p.product,sku:p.sku,quantity:p.quantity,unit:p.unitType,netAmount:p.netAmount})),note:'Provider usage charges in returned report, not payment confirmation or your plan allowance. Included, billed and raw runner minutes can differ.'};}
  await recordCheck(provider,'verified','Read-only provider report received. Coverage is limited to returned rows; zero rows do not verify zero company cost. Not added to cash totals.',{month,...report});
- }catch{await recordCheck(provider,'failed','Billing report could not be verified. Check access or provider availability. Missing costs remain unknown.');}
+ }catch(e){const code=e instanceof Error&&['FOCUS_REPORT_LIMIT','FOCUS_SCHEMA_INVALID'].includes(e.message)?e.message:e instanceof Error&&e.name==='TimeoutError'?'BILLING_TIMEOUT':'BILLING_UNVERIFIED';await recordCheck(provider,'failed',`[${code}] Billing report could not be verified. Check response limits, access or provider availability. Missing costs remain unknown.`,{diagnostic:code});}
  }
 }
 async function workflowContext(){const r=await db().from('hub_ops_settings').select('*').eq('singleton',true).single();check(r.error);const s=r.data;if(!s?.enabled||!s.owner_id)return null;await rpc('hub_alfred_owner',{p_actor:s.owner_id});const apps=await db().from('hub_apps').select('slug,name,color,website').eq('active',true);check(apps.error);const c:HubContext={user:{id:s.owner_id,email:''},staff:{role:'owner',displayName:'Owner-authorized Alfred workflows'},apps:(apps.data??[]).map(a=>({...a,configured:true})),capabilities:capabilitiesForRole('owner'),workspaceAccess:workspaceAccessFor('owner'),setupIssues:[]};return {s,c};}
