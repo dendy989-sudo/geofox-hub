@@ -11,6 +11,10 @@
     {
       "path": "/api/costs/cron",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/alfred/operations/cron",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

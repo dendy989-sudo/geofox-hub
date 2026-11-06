@@ -20,6 +20,7 @@ import "@/components/workspace/responsive-print.css";
 
 const CostMonitorPanel = dynamic(() => import("@/components/costs/monitor").then(m => m.CostMonitorPanel), { loading: () => <Loading /> });
 const CostAlertBanner = dynamic(() => import("@/components/costs/monitor").then(m => m.CostAlertBanner));
+const OperationsWorkflowsPanel = dynamic(() => import("@/components/ops/operations").then(m => m.OperationsPanel), { loading: () => <Loading /> });
 const AlfredPanel = dynamic(() => import("@/components/alfred/alfred").then((module) => module.AlfredPanel), { loading: () => <Loading /> });
 const TasksPanel = dynamic(() => import("@/components/workspace/tasks").then((module) => module.TasksPanel), { loading: () => <Loading /> });
 const MarketingPanel = dynamic(() => import("@/components/workspace/marketing").then((module) => module.MarketingPanel), { loading: () => <Loading /> });
@@ -30,7 +31,7 @@ const ProfilePanel = dynamic(() => import("@/components/workspace/profile").then
 type Area = "alfred" | "admin" | "marketing" | "tasks" | "legal" | "accounting" | "profile";
 interface NavItem { id: string; label: string; icon: IconName; capability?: string; group?: "manage"; }
 const navigation: Record<Area, NavItem[]> = {
-  alfred: [{ id: "command", label: "Command center", icon: "bolt" }, { id: "approvals", label: "Approvals", icon: "checklist" }, { id: "activity", label: "Activity", icon: "clock" }, { id: "knowledge", label: "Knowledge", icon: "book" }, { id: "controls", label: "Controls", icon: "settings" }],
+  alfred: [{ id: "command", label: "Command center", icon: "bolt" }, { id: "operations", label: "Workflows & connections", icon: "layers" }, { id: "approvals", label: "Approvals", icon: "checklist" }, { id: "activity", label: "Activity", icon: "clock" }, { id: "knowledge", label: "Knowledge", icon: "book" }, { id: "controls", label: "Controls", icon: "settings" }],
   admin: [
     { id: "overview", label: "Overview", icon: "grid", capability: "overview:read" },
     { id: "customers", label: "Customers", icon: "users", capability: "customers:read" },
@@ -61,6 +62,7 @@ const navigation: Record<Area, NavItem[]> = {
   ],
   accounting: [
     { id: "costs", label: "Usage & bills", icon: "pulse" },
+    { id: "provider_reports", label: "Provider billing reports", icon: "chart" },
     { id: "overview", label: "Money overview", icon: "wallet" },
     { id: "transactions", label: "Transactions", icon: "checklist" },
     { id: "reports", label: "Reports & export", icon: "chart" },
@@ -116,7 +118,7 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
     return can(`${area.id}:read`) && (apps.length > 0 || companyAccess === "read" || companyAccess === "write");
   });
   const activeArea = route.area === "profile" || visibleAreas.some((area) => area.id === route.area) ? route.area : visibleAreas[0]?.id || "profile";
-  const allowedNavigation = navigation[activeArea].filter((item) => (item.id !== "costs" || preview || bootstrap.data?.staff.role === "owner") && (!item.capability || can(item.capability)));
+  const allowedNavigation = navigation[activeArea].filter((item) => (!["costs","provider_reports"].includes(item.id) || preview || bootstrap.data?.staff.role === "owner") && (!item.capability || can(item.capability)));
   const current = allowedNavigation.find((item) => item.id === route.tab) || allowedNavigation[0];
   const isCompanyWorkspace = activeArea !== "admin" && activeArea !== "profile" && activeArea !== "alfred";
   const companyLevel = isCompanyWorkspace ? bootstrap.data?.workspaceAccess?.[activeArea].companyLevel : "none";
@@ -179,7 +181,9 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
   };
   const props: PanelProps = { preview, app: currentApp, apps, refreshKey, staffRole: bootstrap.data?.staff.role, workspaceAccess: bootstrap.data?.workspaceAccess, notify: setToast, can: scopedCan, navigate };
   function panel() {
+    if (activeArea === "accounting" && current?.id === "provider_reports") return <OperationsWorkflowsPanel key="provider-billing" {...props} initialTab="billing" />;
     if (activeArea === "accounting" && current?.id === "costs") return <CostMonitorPanel key={`costs-${currentApp}`} {...props} />;
+    if (activeArea === "alfred" && current?.id === "operations") return <OperationsWorkflowsPanel {...props} />;
     if (activeArea === "alfred") return <AlfredPanel key={`alfred-${currentApp}`} {...props} tab={current?.id || "command"} />;
     if (!current) return <Empty icon="lock" title="No sections are assigned" description="Ask an owner to review your workspace access." />;
     if (activeArea === "tasks") return <TasksPanel key={`tasks-${currentApp}`} {...props} view={current.id} />;
