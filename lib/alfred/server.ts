@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { APICallError, generateText, Output } from "ai";
+import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getHubContext, getHubService, HubError, databaseError, type HubContext } from "@/lib/hub/server";
 import { getTicket, addTicketMessage, setTicketDelivery } from "@/lib/hub/data";
@@ -10,6 +10,8 @@ import { redactDiagnostic } from "@/lib/hub/redact";
 import { saveWorkspaceRecord } from "@/lib/workspace/server";
 import { replyEmailConfigured, sendCustomerReply } from "@/lib/integrations/email";
 import { runInputSchema, outputSchema, scopeAllows, isAlfredOwner, type AlfredAction, type AlfredDashboard, type AlfredRun, type AlfredSettings, type Connection, type Evidence, type Knowledge, type Department } from "./schema";
+
+import { classifyAlfredFailure } from "./failure";
 
 export const ALFRED_MODEL = "openai/gpt-5.4-mini";
 const runColumns = "id,scope,department,question,state,output,evidence,budget_cents,estimated_usd,input_tokens,output_tokens,error,created_at,finished_at";
@@ -76,6 +78,8 @@ export async function dashboard(context: HubContext, scope: string): Promise<Alf
   const readiness = connections();
   const verifiedRun = (results[1].data as AlfredRun[]).find(run => run.state === "completed");
   if (verifiedRun) readiness[0] = { name: "AI model", state: "available", detail: `A model request completed successfully at ${verifiedRun.finished_at}. Subsequent access still depends on Gateway credits and provider availability.` };
+  const latestRun = (results[1].data as AlfredRun[])[0];
+  if (latestRun?.state === "failed" && latestRun.error?.startsWith("[ALFRED_MODEL_ACCESS_RESTRICTED]")) readiness[0] = { name: "AI model", state: "not_connected", detail: "The latest request was blocked because this model requires purchased AI Gateway credits. Free credits are not sufficient. Add paid credits in the Vercel team's AI Gateway credit-balance dialog, then retry." };
   return { settings: results[0].data as AlfredSettings, runs: results[1].data as AlfredRun[], actions: results[2].data as AlfredAction[], knowledge: results[3].data as Knowledge[], tickets: results[4].data as AlfredDashboard["tickets"], connections: readiness, pendingCount: results[6].count ?? 0,
     usage: { dayCents: usageRows.filter(r => r.created_at.startsWith(today)).reduce((a, r) => a + r.budget_cents, 0), monthCents: usageRows.reduce((a, r) => a + r.budget_cents, 0), monthEstimatedUsd: usageRows.reduce((a, r) => a + Number(r.estimated_usd ?? 0), 0), monthRuns: usageRows.length, period: today.slice(0, 7) + " · UTC budget windows" } };
 }
@@ -134,12 +138,14 @@ export async function runAlfred(context: HubContext, input: unknown) {
   const hash = createHash("sha256").update(JSON.stringify(p)).digest("hex");
   const reservation = await alfredRpc<{ replayed: boolean; run: AlfredRun }>("hub_alfred_begin", { p_actor: context.user.id, p_id: p.requestId, p_scope: p.scope, p_department: p.department, p_question: clean(p.question, 4000), p_hash: hash });
   if (reservation.replayed) return reservation.run;
+  let modelStarted = false;
   let evidence: Evidence[] = []; let inputTokens: number | null = null, outputTokens: number | null = null, cost: number | null = null;
   try {
     const collected = await collectEvidence(context, p.scope, p.department, p.ticketId); evidence = collected.evidence;
     const price = await modelPricing();
     const prompt = JSON.stringify({ department: p.department, ownerRequest: clean(p.question, 4000), selectedTicket: Boolean(collected.ticket), evidence });
     if (Buffer.byteLength(prompt + SYSTEM, "utf8") > 60000) throw new HubError(400, "CONTEXT_LIMIT", "This investigation includes too much information. Select a single app or shorten its knowledge entries.");
+    modelStarted = true;
     const result = await generateText({ model: ALFRED_MODEL, system: SYSTEM, prompt, output: Output.object({ schema: outputSchema }), maxOutputTokens: 3500, maxRetries: 0, abortSignal: AbortSignal.timeout(80000) });
     inputTokens = result.usage.inputTokens ?? null; outputTokens = result.usage.outputTokens ?? null;
     if (inputTokens !== null && outputTokens !== null) cost = inputTokens * price.input + outputTokens * price.output;
@@ -156,8 +162,16 @@ export async function runAlfred(context: HubContext, input: unknown) {
     });
     await alfredRpc("hub_alfred_finish", { p_actor: context.user.id, p_id: p.requestId, p_output: output, p_evidence: evidence, p_actions: actions, p_input: inputTokens, p_output_tokens: outputTokens, p_cost: cost, p_error: null });
   } catch (error) {
-    const status = APICallError.isInstance(error) ? error.statusCode : null;
-    const message = error instanceof HubError ? error.message : status === 401 || status === 403 ? "AI Gateway did not authorize this model request. Check Geofox Hub's Vercel OIDC setting, Gateway account eligibility, or server-side AI_GATEWAY_API_KEY. No proposal was executed." : status === 402 ? "AI Gateway needs available credits before Alfred can investigate. Review the team's Gateway billing in Vercel. No proposal was executed." : status === 429 ? "The model provider is rate-limiting requests. Check Activity before trying again. No proposal was executed." : "Alfred could not complete this investigation. Check AI Gateway access/credits or try a smaller request. No proposal was executed. The reserved allowance is retained for an uncertain provider charge.";
+    const failure = classifyAlfredFailure(error);
+    // Only release an allowance when no call was started, or Gateway explicitly
+    // reports zero provider attempts. An HTTP status alone never proves zero usage.
+    const unstarted = !modelStarted || (inputTokens === null && outputTokens === null && failure.noProviderAttempts);
+    if (unstarted) { inputTokens = 0; outputTokens = 0; cost = 0; }
+    const diagnostic = { code: error instanceof HubError ? error.code : failure.code, statusCode: failure.statusCode, generationId: failure.generationId, providerAttemptCount: failure.providerAttemptCount, modelStarted, allowanceReleased: unstarted };
+    evidence.push({ id: `E${evidence.length + 1}`, label: "Sanitized failure diagnostic (no prompts or credentials)", data: diagnostic });
+    console.warn("alfred.run.failed", { runId: p.requestId, ...diagnostic });
+    const explanation = error instanceof HubError ? error.message : failure.message;
+    const message = `[${diagnostic.code}] ${explanation} No proposal was executed. ${unstarted ? "Unused internal allowance released." : "Allowance retained until provider usage can be confirmed."}`;
     await alfredRpc("hub_alfred_finish", { p_actor: context.user.id, p_id: p.requestId, p_output: null, p_evidence: evidence, p_actions: [], p_input: inputTokens, p_output_tokens: outputTokens, p_cost: cost, p_error: message });
   }
   const saved = await getHubService().from("hub_alfred_runs").select(runColumns).eq("id", p.requestId).single(); check(saved.error); return saved.data as AlfredRun;
@@ -210,4 +224,5 @@ export async function saveKnowledge(context: HubContext, input: unknown) {
   if (!scopeAllows("all", p.data.appSlug, context.apps.map(a => a.slug))) throw new HubError(403, "APP_ACCESS_REQUIRED", "Choose an active app.");
   return alfredRpc("hub_alfred_save_knowledge", { p_actor: context.user.id, p_id: p.data.id, p_version: p.data.version, p_app: p.data.appSlug, p_title: p.data.title, p_body: p.data.body, p_enabled: p.data.enabled });
 }
+
 
