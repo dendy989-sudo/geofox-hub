@@ -5,6 +5,7 @@ import { apiRequest, useHubData, date, type PanelProps } from "@/components/admi
 import { Icon } from "@/components/admin/icons";
 import { DEPARTMENTS, DEPARTMENT_LABELS, type AlfredAction, type AlfredDashboard, type AlfredRun, type Department, type Knowledge } from "@/lib/alfred/schema";
 import "./alfred.css";
+import { ReportText } from "./report";
 
 const dollars = (cents: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 const starters: Record<Department, string> = {
@@ -25,7 +26,7 @@ function RunResult({ run }: { run: AlfredRun }) {
     <div className="alfred-row"><span className={`alfred-status ${run.state}`}>{run.state}</span><small>{date(run.created_at)} · {DEPARTMENT_LABELS[run.department]}</small></div>
     {run.state === "running" && <p>This investigation is still recorded as running. Refresh Activity before retrying. Interrupted runs are marked failed on the next investigation.</p>}
     {run.error && <div className="alfred-notice error">{run.error}</div>}
-    {run.output && <><div className="alfred-report">{run.output.report}</div>
+    {run.output && <><ReportText text={run.output.report} />
       {!!run.output.limitations.length && <div className="alfred-notice"><strong>Limits of this investigation</strong>{run.output.limitations.map((item, i) => <p key={i}>{item}</p>)}</div>}
       {!!run.output.proposals.length && <p className="alfred-muted">{run.output.proposals.length} proposed action{run.output.proposals.length === 1 ? "" : "s"} saved for owner review. No proposal has been automatically executed.</p>}
     </>}
@@ -145,5 +146,3 @@ function Controls({ data, busy, save }: { data: AlfredDashboard; busy: boolean; 
     <p className="alfred-micro">{data.usage.period}. A pause blocks new generations and action starts; it cannot recall a message already submitted to a provider.</p><button className="alfred-primary" disabled={busy || (enabled && !consent)} onClick={() => void save(payload)}>Save controls</button>
   </section>;
 }
-
-

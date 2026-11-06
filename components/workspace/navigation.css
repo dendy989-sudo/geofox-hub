@@ -1,0 +1,4 @@
+
+/* Keep navigation scrollable by touch, wheel and keyboard without a divider scrollbar. */
+.hub-company-root .hub-area-rail,.hub-company-root .hub-sidebar{scrollbar-width:none;overflow-x:hidden;-ms-overflow-style:none}
+.hub-company-root .hub-area-rail::-webkit-scrollbar,.hub-company-root .hub-sidebar::-webkit-scrollbar{display:none;width:0;height:0}

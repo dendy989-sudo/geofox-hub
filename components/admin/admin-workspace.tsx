@@ -15,8 +15,11 @@ import { SettingsPanel } from "./settings";
 import { TicketsPanel } from "./tickets";
 import "@/app/admin/admin.css";
 import "@/components/workspace/workspace.css";
+import "@/components/workspace/navigation.css";
 import "@/components/workspace/responsive-print.css";
 
+const CostMonitorPanel = dynamic(() => import("@/components/costs/monitor").then(m => m.CostMonitorPanel), { loading: () => <Loading /> });
+const CostAlertBanner = dynamic(() => import("@/components/costs/monitor").then(m => m.CostAlertBanner));
 const AlfredPanel = dynamic(() => import("@/components/alfred/alfred").then((module) => module.AlfredPanel), { loading: () => <Loading /> });
 const TasksPanel = dynamic(() => import("@/components/workspace/tasks").then((module) => module.TasksPanel), { loading: () => <Loading /> });
 const MarketingPanel = dynamic(() => import("@/components/workspace/marketing").then((module) => module.MarketingPanel), { loading: () => <Loading /> });
@@ -57,6 +60,7 @@ const navigation: Record<Area, NavItem[]> = {
     { id: "sources", label: "Starter checklist", icon: "book", group: "manage" },
   ],
   accounting: [
+    { id: "costs", label: "Usage & bills", icon: "pulse" },
     { id: "overview", label: "Money overview", icon: "wallet" },
     { id: "transactions", label: "Transactions", icon: "checklist" },
     { id: "reports", label: "Reports & export", icon: "chart" },
@@ -112,7 +116,7 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
     return can(`${area.id}:read`) && (apps.length > 0 || companyAccess === "read" || companyAccess === "write");
   });
   const activeArea = route.area === "profile" || visibleAreas.some((area) => area.id === route.area) ? route.area : visibleAreas[0]?.id || "profile";
-  const allowedNavigation = navigation[activeArea].filter((item) => !item.capability || can(item.capability));
+  const allowedNavigation = navigation[activeArea].filter((item) => (item.id !== "costs" || preview || bootstrap.data?.staff.role === "owner") && (!item.capability || can(item.capability)));
   const current = allowedNavigation.find((item) => item.id === route.tab) || allowedNavigation[0];
   const isCompanyWorkspace = activeArea !== "admin" && activeArea !== "profile" && activeArea !== "alfred";
   const companyLevel = isCompanyWorkspace ? bootstrap.data?.workspaceAccess?.[activeArea].companyLevel : "none";
@@ -175,6 +179,7 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
   };
   const props: PanelProps = { preview, app: currentApp, apps, refreshKey, staffRole: bootstrap.data?.staff.role, workspaceAccess: bootstrap.data?.workspaceAccess, notify: setToast, can: scopedCan, navigate };
   function panel() {
+    if (activeArea === "accounting" && current?.id === "costs") return <CostMonitorPanel key={`costs-${currentApp}`} {...props} />;
     if (activeArea === "alfred") return <AlfredPanel key={`alfred-${currentApp}`} {...props} tab={current?.id || "command"} />;
     if (!current) return <Empty icon="lock" title="No sections are assigned" description="Ask an owner to review your workspace access." />;
     if (activeArea === "tasks") return <TasksPanel key={`tasks-${currentApp}`} {...props} view={current.id} />;
@@ -218,6 +223,7 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
         {preview ? <div className="hub-banner"><Icon name="info" size={20} /><div><strong>Your company, together in one place.</strong><p>Interface preview · sign in to use your saved tasks, content, compliance records, and books.</p></div><div className="hub-banner-actions"><a href="/admin/login" className="hub-button small">Staff sign-in <Icon name="arrow" size={13} /></a></div></div> : null}
         {!preview && Boolean(bootstrap.data?.setupIssues.length) && activeArea === "admin" && current?.id !== "settings" ? <div className="hub-banner warning"><Icon name="info" size={19} /><div><strong>A few connections still need attention</strong><p>{bootstrap.data?.setupIssues[0]}</p>{can("settings:write") ? <button className="hub-section-link" style={{ marginTop: 6 }} onClick={() => navigate("settings")}>Review connection setup <Icon name="arrow" size={12} /></button> : null}</div></div> : null}
         {currentApp !== "all" && activeArea !== "profile" ? <div className="hub-current-app">{currentApp === "company" ? <span className="hub-app-badge"><Icon name="layers" size={12} />Geofox company</span> : <AppBadge slug={currentApp} apps={apps} />}<span>{currentApp === "company" ? "Company records across your business" : "Records and totals scoped to this app"}</span></div> : null}
+        {!preview && bootstrap.data?.staff.role === "owner" && !(activeArea === "accounting" && current?.id === "costs") ? <CostAlertBanner navigate={navigate} /> : null}
         <ErrorBanner error={logoutError} />
         {bootstrap.loading ? <Loading label="Opening your secure workspace…" /> : bootstrap.error ? <><ErrorBanner error={bootstrap.error} /><div className="hub-controls"><a className="hub-button" href="/admin/login">Sign in again</a><button className="hub-button secondary" onClick={bootstrap.reload}>Try again</button></div></> : ready ? panel() : null}
         <p className="hub-footer-note"><Icon name="lock" size={12} />GEOFOX APPS LLC · {preview ? "Interface preview" : "Secure company workspace"} · Central Time unless marked otherwise.</p>
@@ -226,4 +232,3 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
     {toast ? <div className="hub-toast" role="status"><Icon name="info" size={17} /><span>{toast}</span><button className="hub-toast-close" type="button" aria-label="Dismiss notification" onClick={() => setToast("")}><Icon name="close" size={14} /></button></div> : null}
   </div>;
 }
-
