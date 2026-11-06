@@ -52,7 +52,7 @@ const migratedHouseholdSnapshot=await snapshot();
 const legacyTagSeries=entry({frequency:'monthly',end_date:'2026-03-31'}), legacyTagPlan=plan();
 await mutate('save_entry',legacyTagSeries); await mutate('save_plan',legacyTagPlan);
 const legacyTagsSnapshot=await snapshot();
-const tagsMigration=await readFile(new URL('../migrations/20261105221524_finance_tags_quarterly_history.sql', import.meta.url), 'utf8');
+const tagsMigration=await readFile(new URL('../migrations/20261106012309_finance_tags_quarterly_history.sql', import.meta.url), 'utf8');
 await db.exec(tagsMigration);
 const migratedTagsSnapshot=await snapshot();
 async function one(sql, params = []) { return (await db.query(sql, params)).rows[0]; }
