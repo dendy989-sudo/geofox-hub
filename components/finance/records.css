@@ -3,6 +3,21 @@
 .finance-root .fr-fieldset:disabled{opacity:.78}
 .finance-root .fr-fieldset input:disabled,.finance-root .fr-fieldset select:disabled{background:#f5f7fb;color:#67738b}
 .finance-root .fr-form-intro{margin:0;color:var(--fn-muted);font-size:12px;line-height:1.65}
+.finance-root .fr-edit-scope{min-width:0;margin:0;padding:14px;border:1px solid #e2d9f4;border-radius:10px;background:#faf8ff}
+.finance-root .fr-edit-scope legend{padding:0 5px;font-size:12px;font-weight:600;color:#625276}
+.finance-root .fr-edit-scope-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.finance-root .fr-edit-scope-options>label{display:flex;align-items:flex-start;gap:9px;min-width:0;padding:12px;border:1px solid #e4def0;border-radius:8px;background:#fff;cursor:pointer}
+.finance-root .fr-edit-scope-options>label:has(input:checked){border-color:#a48bd6;background:#f1ebfc}
+.finance-root .fr-edit-scope-options input{width:16px;height:16px;flex:none;margin:1px 0 0;accent-color:#8069d4}
+.finance-root .fr-edit-scope-options input:focus-visible,.finance-root .fr-show-cancelled input:focus-visible{outline:2px solid #a38cde;outline-offset:3px}
+.finance-root .fr-edit-scope-options span{display:grid;gap:5px}
+.finance-root .fr-edit-scope-options strong{font-size:11px;font-weight:600;color:#625276;line-height:1.5}
+.finance-root .fr-edit-scope-options small,.finance-root .fr-edit-scope>p{font-size:10px;line-height:1.65;color:#827590}
+.finance-root .fr-edit-scope>p{margin:12px 0 0}
+.finance-root .fr-edit-scope:disabled{opacity:.7}
+.finance-root .fr-show-cancelled{display:flex;align-items:center;gap:8px;min-height:38px;font-size:11px;color:#65718a;cursor:pointer}
+.finance-root .fr-show-cancelled input{width:16px;height:16px;margin:0;flex:none;accent-color:#8069d4}
+.finance-root .fr-inline-confirm.fr-cancel-confirm{max-width:none;padding:14px}
 .finance-root .fr-money-input{position:relative;display:flex;align-items:center}
 .finance-root .fr-money-input>span{position:absolute;left:12px;color:#8290a7;font-size:13px;pointer-events:none}
 .finance-root .fr-money-input input{padding-left:28px!important;font-variant-numeric:tabular-nums}
@@ -198,6 +213,7 @@
   .finance-root .fr-toolbar select{width:100%;max-width:none}
 }
 @media(max-width:520px){
+  .finance-root .fr-edit-scope-options{grid-template-columns:1fr}
   .finance-root .fr-entry-summary{padding:14px}
   .finance-root .fr-entry-summary>strong{font-size:18px}
   .finance-root .fr-history-item{flex-wrap:wrap}

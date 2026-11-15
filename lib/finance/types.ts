@@ -1,4 +1,5 @@
 export type EntryKind = "bill" | "income";
+export type FinanceEntryScope = "single" | "future";
 export type ExpenseType = "bill" | "installment" | "payment_plan";
 export type Frequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly" | "custom";
 export type CustomRepeatMode = "month_days" | "specific_dates";
@@ -26,11 +27,19 @@ export interface FinanceSeries {
   id: string; user_id: string; kind: EntryKind; title: string; category: string;
   expense_type: ExpenseType; amount_cents: number; start_date: string;
   end_date: string | null; frequency: Frequency; active: boolean; notes: string;
+  cancelled_from?: string | null;
   custom_mode: CustomRepeatMode | null; custom_month_days: number[]; custom_dates: string[];
   vendor_id: string | null;
   tag_ids: string[];
   account_id: string | null; payment_method: PaymentMethod; reminder_days: number | null;
   created_at: string;
+}
+export interface FinanceSeriesTerms {
+  series_id: string; user_id: string; effective_from: string;
+  kind: EntryKind; title: string; category: string; expense_type: ExpenseType;
+  amount_cents: number; vendor_id: string | null; account_id: string | null;
+  payment_method: PaymentMethod; reminder_days: number | null; tag_ids: string[]; notes: string;
+  created_at: string; updated_at: string;
 }
 export interface FinancePlan {
   id: string; user_id: string; title: string; creditor: string;
@@ -96,6 +105,7 @@ export interface FinanceMonth {
 export interface FinanceData {
   user: { id: string; display_name: string }; today: string;
   entries: FinanceEntry[]; payments: FinancePayment[]; series: FinanceSeries[];
+  series_terms?: FinanceSeriesTerms[];
   plans: FinancePlan[]; debts: FinanceDebt[]; debt_history: FinanceDebtHistory[];
   spending: FinanceSpending[]; months: FinanceMonth[]; vendors: FinanceVendor[]; tags: FinanceTag[];
   accounts: FinanceAccount[]; balance_updates: FinanceBalanceUpdate[]; transfers: FinanceTransfer[];

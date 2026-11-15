@@ -130,6 +130,8 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
   const action = typeof actionValue === "string" ? actionValue : "";
   if (!payloadValue || typeof payloadValue !== "object" || Array.isArray(payloadValue)) return fail("Enter the details for this change.");
   const p = payloadValue as Record<string, unknown>;
+  const scope = p.scope === undefined ? undefined : choice(p.scope, ["single", "future"], "bill change scope");
+  if (scope !== undefined && action !== "save_entry" && action !== "entry_status") return fail("Choose a scope when editing or cancelling a bill.");
   const id = () => uuid(p.id);
   const optionalId = () => uuid(p.id, "Record", true);
   let result: Record<string, unknown>;
@@ -142,16 +144,18 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
       if (end && due && end < due) return fail("The repeat end date must be on or after the first due date.");
       const frequency = choice(p.frequency ?? "once", ["once", "weekly", "biweekly", "monthly", "quarterly", "yearly", "custom"], "repeat frequency");
       const kind = choice(p.kind, ["bill", "income"], "entry type");
+      if (scope === "future" && (!optionalId() || kind !== "bill")) return fail("Choose an existing recurring bill to change this and future bills.");
       const custom = customRepeat(p, frequency, due, end);
       if (frequency === "custom" && custom.custom_mode === "specific_dates") {
         due = (custom.custom_dates as string[])[0];
         if (scheduled === originalDue) scheduled = due;
       }
-      result = { id: optionalId(), kind, title: text(p.title, "Title"), category: text(p.category, "Category", 80), expense_type: choice(p.expense_type ?? "bill", ["bill", "installment", "payment_plan"], "expense type"), amount_cents: cents(p.amount_cents, "Amount", 1), original_due_date: due, scheduled_date: scheduled, notes: text(p.notes, "Notes", 4000, false), frequency, end_date: end, ...custom, ...vendorLink(p), ...forecastFields(p, kind), ...tagLinks(p) };
+      result = { id: optionalId(), kind, title: text(p.title, "Title"), category: text(p.category, "Category", 80), expense_type: choice(p.expense_type ?? "bill", ["bill", "installment", "payment_plan"], "expense type"), amount_cents: cents(p.amount_cents, "Amount", 1), original_due_date: due, scheduled_date: scheduled, notes: text(p.notes, "Notes", 4000, false), frequency, end_date: end, ...custom, ...vendorLink(p), ...forecastFields(p, kind), ...tagLinks(p), scope };
       break;
     }
     case "entry_status":
-      result = { id: id(), status: choice(p.status, ["active", "cancelled"], "status") };
+      result = { id: id(), status: choice(p.status, ["active", "cancelled"], "status"), scope };
+      if (scope === "future" && (result.status !== "cancelled" || p.archived !== undefined)) return fail("Future bill changes can cancel this and later bills. Restore or archive one bill at a time.");
       if (p.archived !== undefined) result.archived = bool(p.archived, "Archive");
       break;
     case "move_entry":
