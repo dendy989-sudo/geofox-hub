@@ -92,11 +92,14 @@ function AnchorDetails({ day, data, edit }: { day: FinanceLedgerDay; data: Finan
 
 function DayDialog({ date, props, onClose }: { date: string; props: RecordsProps; onClose: () => void }) {
   const { data, openEntry, openMove, openPayment } = props;
+  const [showCancelled, setShowCancelled] = useState(false);
   const scope = scopeOf(props);
   const day = dailyLedger(data, date.slice(0, 7), { accountScope: scope }).find(item => item.date === date)!;
   const payments = data.payments.filter(payment => payment.user_id === data.user.id && payment.paid_on === date && !payment.reversed_at && matchesAccountScope(payment.account_id, scope));
   const paidIds = new Set(payments.map(payment => payment.entry_id));
-  const entries = data.entries.filter(entry => entry.user_id === data.user.id && ((entry.scheduled_date === date && matchesAccountScope(entry.account_id, scope)) || paidIds.has(entry.id)));
+  const dayEntries = data.entries.filter(entry => entry.user_id === data.user.id && ((entry.scheduled_date === date && matchesAccountScope(entry.account_id, scope)) || paidIds.has(entry.id)));
+  const cancelledPlannedBills = dayEntries.filter(entry => entry.kind === "bill" && entry.status === "cancelled" && !paidIds.has(entry.id));
+  const entries = dayEntries.filter(entry => entry.kind !== "bill" || entry.status !== "cancelled" || showCancelled || paidIds.has(entry.id));
   function handoff(action: () => void) { onClose(); action(); }
   return <FinanceDialog title={formatDate(date)} onClose={onClose}><div className="fn-stack">
     <p className="fp-scope-caption">{scopeName(data, scope)}</p>
@@ -105,6 +108,7 @@ function DayDialog({ date, props, onClose }: { date: string; props: RecordsProps
     <p className="fn-form-help">Saved changes update the app. Recorded payments stay with the account and method used when they were recorded, even if the remaining bill is later assigned elsewhere.</p>
     <AnchorDetails day={day} data={data} edit={props.openBalance ? accountId => handoff(() => props.openBalance?.(date, accountId)) : undefined} />
     {day.transfers.length ? <section className="fp-transfer-list"><h3>Account transfers</h3>{day.transfers.map(transfer => <div className="fp-transfer" key={transfer.id}><div><strong>{accountName(data, transfer.from_account_id)} → {accountName(data, transfer.to_account_id)}</strong><small>{transfer.status === "completed" ? "Completed" : "Planned"}{transfer.notes ? ` · ${transfer.notes}` : ""}</small></div><Money cents={transfer.amount_cents} /></div>)}<p>Transfers move money between your accounts. They do not count as income or bills.</p></section> : null}
+    {cancelledPlannedBills.length ? <label className="fr-show-cancelled"><input type="checkbox" checked={showCancelled} onChange={event => setShowCancelled(event.target.checked)} /><span>Show cancelled bills ({cancelledPlannedBills.length})</span></label> : null}
     <div className="fn-day-items">{entries.length ? entries.map(entry => {
       const recorded = payments.filter(payment => payment.entry_id === entry.id);
       return <div className="fn-day-item" key={entry.id}>

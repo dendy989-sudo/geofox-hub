@@ -55,10 +55,13 @@ const legacyTagsSnapshot=await snapshot();
 const tagsMigration=await readFile(new URL('../migrations/20261106012309_finance_tags_quarterly_history.sql', import.meta.url), 'utf8');
 await db.exec(tagsMigration);
 const migratedTagsSnapshot=await snapshot();
+const recurringScopeMigration=await readFile(new URL('../migrations/20261115185530_finance_recurring_bill_scope.sql', import.meta.url), 'utf8');
+await db.exec(recurringScopeMigration);
 async function one(sql, params = []) { return (await db.query(sql, params)).rows[0]; }
 async function mutate(action, payload, actor = owner, validate = true) {
   const p = validate ? validateFinanceMutation(action, payload).payload : payload;
-  return (await one('select public.finance_mutate($1,$2,$3::jsonb) result',[actor,action,JSON.stringify(p)])).result;
+  const rpc=p.scope==='future'?'finance_mutate_recurring':'finance_mutate';
+  return (await one(`select public.${rpc}($1,$2,$3::jsonb) result`,[actor,action,JSON.stringify(p)])).result;
 }
 async function snapshot(actor = owner, through = '2026-11-30') { return (await one('select public.finance_snapshot($1,$2::date) result', [actor,through])).result; }
 async function denied(callback, code = 'P0001') { await assert.rejects(callback, e => e.code === code); }
@@ -78,12 +81,12 @@ test('migrations are repeatable under Supabase default grants, all tables use RL
   await db.exec(readonlyMigration);
   await db.exec(customVendorsMigration);
   await db.exec(accountsMigration);
-  await db.exec(householdMigration); await db.exec(tagsMigration);
+  await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration);
   assert.deepEqual((await db.query('select user_id from public.finance_access')).rows.map(r=>r.user_id), [owner]);
   const tables = (await db.query("select c.relname,c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relname like 'finance_%' and relkind='r'")).rows;
-  assert.equal(tables.length,17); assert.ok(tables.every(t=>t.relrowsecurity));
+  assert.equal(tables.length,18); assert.ok(tables.every(t=>t.relrowsecurity));
   const functions=(await db.query("select proname,prosecdef from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).rows;
-  assert.equal(functions.length,18); assert.ok(functions.every(f=>f.prosecdef===false));
+  assert.equal(functions.length,21); assert.ok(functions.every(f=>f.prosecdef===false));
   for (const role of ['anon','authenticated']) {
     assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and has_function_privilege($1,p.oid,'EXECUTE')",[role])).n,0);
   }
@@ -532,7 +535,7 @@ test('SQL rejects unsafe vendor URLs and treats SQL-like names and URLs as data'
 });
 
 test('custom/vendor migration can be reapplied with financial history and preserves private grants', async () => {
-  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); const after=await snapshot();
+  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); const after=await snapshot();
   assert.deepEqual(after,before);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_vendors','DELETE,TRUNCATE,TRIGGER,REFERENCES') granted")).granted,false);
@@ -547,7 +550,7 @@ test('account migration preserves legacy cash history and backfills reminders on
   assert.equal(p.account_id,null); assert.equal(p.payment_method,'manual'); assert.equal(p.amount_cents,2000);
   await mutate('save_entry',{...legacyBill,reminder_days:null});
   await mutate('save_entry',{...legacyIncome,reminder_days:5});
-  await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); s=await snapshot();
+  await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); s=await snapshot();
   assert.equal(s.entries.find(e=>e.id===legacyBill.id).reminder_days,null);
   assert.equal(s.entries.find(e=>e.id===legacyIncome.id).reminder_days,5);
   const a=account(); await mutate('save_account',a);
@@ -849,7 +852,7 @@ test('collection reversal restores cash to its recorded account even after the b
 });
 
 test('account migration is repeatable with posted cash and savings history, with least-privilege grants', async () => {
-  const before=await snapshot(); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); const after=await snapshot(); assert.deepEqual(after,before);
+  const before=await snapshot(); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); const after=await snapshot(); assert.deepEqual(after,before);
   for(const table of ['finance_accounts','finance_transfers','finance_savings_goals','finance_goal_history']) {
     assert.equal((await one("select has_table_privilege('service_role',$1,'DELETE,TRUNCATE,REFERENCES,TRIGGER') granted",[`public.${table}`])).granted,false,table);
   }
@@ -1000,8 +1003,8 @@ test('household labels never grant access or let another approved owner alter de
 });
 
 test('household migration is repeatable with assignments, shared collections and private grants intact', async () => {
-  const before=await snapshot(); await db.exec(householdMigration); await db.exec(tagsMigration); assert.deepEqual(await snapshot(),before);
-  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,18);
+  const before=await snapshot(); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); assert.deepEqual(await snapshot(),before);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,21);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
 });
@@ -1212,9 +1215,181 @@ test('tag and recurrence failures leave no partial series, plans or altered fina
 });
 
 test('tag migration reapplication preserves quarterly schedules, archived links, customized installments and money', async () => {
-  const before=await snapshot(); await db.exec(tagsMigration); assert.deepEqual(await snapshot(),before);
-  assert.equal((await one("select count(*)::int n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relname like 'finance_%'")).n,17);
-  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%'")).n,18);
+  const before=await snapshot(); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); assert.deepEqual(await snapshot(),before);
+  assert.equal((await one("select count(*)::int n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relname like 'finance_%'")).n,18);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%'")).n,21);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_tags','DELETE,TRUNCATE,REFERENCES,TRIGGER') granted")).granted,false);
+});
+
+async function recurringEntries(id, through='2026-07-31') {
+  const data=await snapshot(owner,through);
+  const seriesId=data.entries.find(e=>e.id===id)?.series_id;
+  return data.entries.filter(e=>e.series_id===seriesId);
+}
+
+test('future bill edits preserve earlier history, paid and inactive rows, and unrelated series', async () => {
+  const e=entry({frequency:'monthly',title:'Recurring electricity'});
+  const unrelated=entry({frequency:'monthly',title:'Recurring electricity'});
+  await mutate('save_entry',e); await mutate('save_entry',unrelated);
+  let rows=await recurringEntries(e.id);
+  const ids=rows.map(r=>r.id), seriesId=rows[0].series_id;
+  await mutate('record_payment',{id:randomUUID(),entry_id:ids[3],amount_cents:10000,paid_on:'2026-04-15'});
+  await mutate('entry_status',{id:ids[4],status:'cancelled'});
+  await mutate('entry_status',{id:ids[5],status:'active',archived:true});
+  await mutate('transfer_collections',{id:randomUUID(),entry_id:ids[6],collector:'Collector'});
+  await mutate('move_entry',{id:ids[5],scheduled_date:'2026-06-20'});
+  const beforePayments=(await snapshot(owner,'2026-07-31')).payments.filter(p=>p.entry_id===ids[3]);
+  const result=await mutate('save_entry',{...rows[1],title:'Updated electricity',amount_cents:12000,scheduled_date:'2026-02-18',scope:'future'});
+  assert.equal(result.affected_entries,3);
+  rows=await recurringEntries(e.id);
+  assert.deepEqual(rows.map(r=>r.amount_cents),[10000,12000,12000,10000,10000,12000,10000]);
+  assert.deepEqual(rows.map(r=>r.title),['Recurring electricity','Updated electricity','Updated electricity','Recurring electricity','Recurring electricity','Updated electricity','Recurring electricity']);
+  assert.deepEqual(rows.map(r=>r.original_amount_cents),Array(7).fill(10000));
+  assert.equal(rows[1].scheduled_date,'2026-02-18'); assert.equal(rows[2].scheduled_date,'2026-03-15'); assert.equal(rows[5].scheduled_date,'2026-06-20');
+  assert.ok(rows[5].archived_at);
+  assert.deepEqual((await snapshot(owner,'2026-07-31')).payments.filter(p=>p.entry_id===ids[3]),beforePayments);
+  assert.ok((await recurringEntries(unrelated.id)).every(r=>r.title==='Recurring electricity'&&r.amount_cents===10000));
+  const expanded=await snapshot(owner,'2026-09-30');
+  assert.ok(expanded.entries.filter(r=>r.series_id===seriesId&&r.original_due_date>='2026-08-01').every(r=>r.amount_cents===12000&&r.title==='Updated electricity'));
+  assert.equal(expanded.series.find(s=>s.id===seriesId).amount_cents,10000,'The original series defaults remain historical');
+  assert.equal(expanded.series_terms.find(t=>t.series_id===seriesId).effective_from,'2026-02-15');
+});
+
+test('future changes spread only changed fields while retaining individual overrides', async () => {
+  const e=entry({frequency:'monthly'}); await mutate('save_entry',e);
+  let rows=await recurringEntries(e.id,'2026-04-30');
+  const specialAccount=account(); await mutate('save_account',specialAccount);
+  const specialTag=tag(); await mutate('save_tag',specialTag);
+  await mutate('save_entry',{...rows[2],amount_cents:23000,account_id:specialAccount.id,payment_method:'autopay',tag_ids:[specialTag.id]});
+  await mutate('save_entry',{...rows[1],title:'Electric renamed',scope:'future'});
+  rows=await recurringEntries(e.id,'2026-04-30');
+  assert.equal(rows[2].title,'Electric renamed'); assert.equal(rows[2].amount_cents,23000);
+  assert.equal(rows[2].account_id,specialAccount.id); assert.equal(rows[2].payment_method,'autopay'); assert.deepEqual(rows[2].tag_ids,[specialTag.id]);
+  assert.equal(rows[3].amount_cents,10000); assert.equal(rows[3].account_id,null);
+});
+
+test('later then earlier future edits resolve effective terms without backdating or month-end drift', async () => {
+  const e=entry({frequency:'monthly',original_due_date:'2026-01-31',scheduled_date:'2026-01-31',title:'Original'});
+  await mutate('save_entry',e);
+  let rows=await recurringEntries(e.id,'2026-05-31'); const seriesId=rows[0].series_id;
+  await mutate('save_entry',{...rows[2],title:'March terms',amount_cents:15000,scope:'future'});
+  await mutate('save_entry',{...rows[1],title:'February forward',scope:'future'});
+  // Simulate a historic date never materialized: later terms must not leak back.
+  await db.query('delete from public.finance_entries where id=$1',[e.id]);
+  let data=await snapshot(owner,'2026-09-30');
+  rows=data.entries.filter(r=>r.series_id===seriesId);
+  assert.deepEqual(rows.map(r=>r.original_due_date),['2026-01-31','2026-02-28','2026-03-31','2026-04-30','2026-05-31','2026-06-30','2026-07-31','2026-08-31','2026-09-30']);
+  assert.equal(rows[0].title,'Original'); assert.equal(rows[0].amount_cents,10000);
+  assert.ok(rows.slice(1).every(r=>r.title==='February forward'));
+  assert.equal(rows[1].amount_cents,10000); assert.ok(rows.slice(2).every(r=>r.amount_cents===15000));
+  await mutate('save_entry',{...rows[1],amount_cents:11000,scope:'future'});
+  data=await snapshot(owner,'2026-12-31');
+  assert.ok(data.entries.filter(r=>r.series_id===seriesId&&r.original_due_date>='2026-02-01').every(r=>r.amount_cents===11000));
+  assert.ok(data.series_terms.filter(t=>t.series_id===seriesId).every(t=>t.amount_cents===11000));
+});
+
+test('future amount changes reject partial-payment conflicts atomically and protect fully paid anchors', async () => {
+  const e=entry({frequency:'monthly'}); await mutate('save_entry',e);
+  let rows=await recurringEntries(e.id,'2026-04-30');
+  await mutate('record_payment',{id:randomUUID(),entry_id:rows[2].id,amount_cents:8000,paid_on:'2026-03-15'});
+  const before=await snapshot(owner,'2026-04-30');
+  await assert.rejects(()=>mutate('save_entry',{...rows[1],amount_cents:7000,title:'Must roll back',scope:'future'}),/lower than recorded payments/);
+  const after=await snapshot(owner,'2026-04-30');
+  assert.deepEqual(after.entries.filter(r=>r.series_id===rows[0].series_id),before.entries.filter(r=>r.series_id===rows[0].series_id));
+  assert.deepEqual(after.series_terms,before.series_terms,'Rejected edit also rolls back every future-term change');
+  await mutate('record_payment',{id:randomUUID(),entry_id:rows[0].id,amount_cents:10000,paid_on:'2026-01-15'});
+  await mutate('save_entry',{...rows[0],amount_cents:8000,title:'Future lower amount',scope:'future'});
+  rows=await recurringEntries(e.id,'2026-04-30');
+  assert.equal(rows[0].amount_cents,10000); assert.equal(rows[0].title,'Electricity');
+  assert.ok(rows.slice(1).every(r=>r.amount_cents===8000&&r.title==='Future lower amount'));
+});
+
+test('single changes leave recurring defaults intact while future cancellation includes archived and partially paid bills', async () => {
+  const e=entry({frequency:'monthly'}); await mutate('save_entry',e);
+  let rows=await recurringEntries(e.id,'2026-05-31'); const seriesId=rows[0].series_id;
+  await mutate('save_entry',{...rows[1],title:'One bill',amount_cents:17000,scope:'single'});
+  await mutate('entry_status',{id:rows[1].id,status:'cancelled',scope:'single'});
+  await mutate('entry_status',{id:rows[2].id,status:'active',archived:true});
+  await mutate('record_payment',{id:randomUUID(),entry_id:rows[2].id,amount_cents:1000,paid_on:'2026-03-15'});
+  await mutate('record_payment',{id:randomUUID(),entry_id:rows[3].id,amount_cents:10000,paid_on:'2026-04-15'});
+  await mutate('move_entry',{id:rows[0].id,scheduled_date:'2026-06-01'});
+  await mutate('move_entry',{id:rows[4].id,scheduled_date:'2026-01-01'});
+  await mutate('entry_status',{id:rows[1].id,status:'cancelled',scope:'future'});
+  let data=await snapshot(owner,'2026-12-31');
+  rows=data.entries.filter(r=>r.series_id===seriesId);
+  assert.equal(rows.length,5); assert.deepEqual(rows.map(r=>r.status),['active','cancelled','cancelled','active','cancelled']);
+  assert.equal(data.series.find(s=>s.id===seriesId).cancelled_from,'2026-02-15');
+  assert.equal(data.series.find(s=>s.id===seriesId).title,'Electricity'); assert.equal(data.series.find(s=>s.id===seriesId).amount_cents,10000);
+  await mutate('save_series',{id:seriesId,active:false}); await mutate('save_series',{id:seriesId,active:true});
+  assert.equal((await snapshot(owner,'2027-12-31')).entries.filter(r=>r.series_id===seriesId).length,5);
+  await mutate('entry_status',{id:rows[1].id,status:'active',scope:'single'});
+  data=await snapshot(owner,'2027-12-31');
+  assert.equal(data.entries.find(r=>r.id===rows[1].id).status,'active');
+  assert.equal(data.entries.find(r=>r.id===rows[2].id).status,'cancelled');
+  assert.equal(data.entries.filter(r=>r.series_id===seriesId).length,5);
+});
+
+test('payment reversal does not reopen a cancelled recurring bill unless explicitly restored', async () => {
+  const e=entry({frequency:'monthly'}); await mutate('save_entry',e);
+  const rows=await recurringEntries(e.id,'2026-03-31');
+  const pay={id:randomUUID(),entry_id:rows[2].id,amount_cents:10000,paid_on:'2026-03-15'};
+  await mutate('record_payment',pay);
+  await mutate('entry_status',{id:rows[1].id,status:'cancelled',scope:'future'});
+  assert.equal((await snapshot(owner,'2026-03-31')).entries.find(r=>r.id===rows[2].id).status,'active');
+  await mutate('remove_payment',{id:pay.id});
+  assert.equal((await snapshot(owner,'2026-03-31')).entries.find(r=>r.id===rows[2].id).status,'cancelled');
+  await mutate('entry_status',{id:rows[2].id,status:'active'});
+  const repay={...pay,id:randomUUID()}; await mutate('record_payment',repay); await mutate('remove_payment',{id:repay.id});
+  assert.equal((await snapshot(owner,'2026-03-31')).entries.find(r=>r.id===rows[2].id).status,'active','Explicit one-bill restore survives later reversal');
+  await mutate('record_payment',{...pay,id:randomUUID()});
+  await mutate('entry_status',{id:rows[1].id,status:'cancelled',scope:'future'});
+  const latest=(await snapshot(owner,'2026-03-31')).payments.find(p=>p.entry_id===rows[2].id&&!p.reversed_at);
+  await mutate('remove_payment',{id:latest.id});
+  assert.equal((await snapshot(owner,'2026-03-31')).entries.find(r=>r.id===rows[2].id).status,'cancelled','A new future cancellation replaces the earlier single exception');
+});
+
+test('custom and quarterly future changes retain anchored dates and cancellation boundary', async () => {
+  for(const extra of [
+    {frequency:'quarterly',original_due_date:'2026-01-31',scheduled_date:'2026-01-31'},
+    {frequency:'custom',custom_mode:'month_days',custom_month_days:[15,31],original_due_date:'2026-01-15',scheduled_date:'2026-01-15'},
+    {frequency:'custom',custom_mode:'specific_dates',custom_dates:['2026-01-15','2026-03-03','2026-07-07','2026-10-10']},
+  ]) {
+    const e=entry(extra); await mutate('save_entry',e);
+    let rows=await recurringEntries(e.id,'2026-07-31'); const seriesId=rows[0].series_id;
+    const dates=rows.map(r=>r.original_due_date);
+    await mutate('save_entry',{...rows[1],title:'Changed future',amount_cents:13000,scope:'future'});
+    let data=await snapshot(owner,'2026-12-31');
+    rows=data.entries.filter(r=>r.series_id===seriesId);
+    assert.deepEqual(rows.slice(0,dates.length).map(r=>r.original_due_date),dates);
+    assert.equal(rows[0].amount_cents,10000); assert.ok(rows.slice(1).every(r=>r.amount_cents===13000));
+    if(extra.frequency==='quarterly') assert.deepEqual(rows.map(r=>r.original_due_date),['2026-01-31','2026-04-30','2026-07-31','2026-10-31']);
+    await mutate('entry_status',{id:rows[1].id,status:'cancelled',scope:'future'});
+    data=await snapshot(owner,'2027-12-31');
+    assert.equal(data.entries.filter(r=>r.series_id===seriesId).length,rows.length);
+    assert.ok(data.entries.filter(r=>r.series_id===seriesId&&r.original_due_date>=rows[1].original_due_date).every(r=>r.status==='cancelled'));
+  }
+});
+
+test('future scope enforces ownership, supported actions and private grants at the database boundary', async () => {
+  const e=entry({frequency:'monthly'}); await mutate('save_entry',e);
+  const rows=await recurringEntries(e.id,'2026-03-31');
+  await denied(()=>mutate('save_entry',{...rows[1],title:'Other owner',scope:'future'},secondOwner,false),'P0002');
+  const once=entry(); await mutate('save_entry',once);
+  await denied(()=>mutate('save_entry',{...once,scope:'future'},owner,false));
+  const income=entry({kind:'income',frequency:'monthly'}); await mutate('save_entry',income);
+  await denied(()=>mutate('save_entry',{...income,scope:'future'},owner,false));
+  await denied(()=>mutate('entry_status',{id:rows[1].id,status:'active',scope:'future'},owner,false));
+  await denied(()=>mutate('entry_status',{id:rows[1].id,status:'cancelled',archived:true,scope:'future'},owner,false));
+  await denied(()=>one('select public.finance_mutate_recurring($1,$2,$3::jsonb)',[owner,'save_entry',JSON.stringify({...rows[1],scope:'single'})]));
+  await mutate('save_entry',{...rows[1],title:'Private terms',scope:'future'});
+  assert.ok(!(await snapshot(secondOwner)).series_terms.some(t=>t.series_id===rows[0].series_id));
+  await db.exec('set role authenticated');
+  try {
+    await denied(()=>db.query('select * from public.finance_series_terms'),'42501');
+    await denied(()=>mutate('entry_status',{id:rows[1].id,status:'cancelled',scope:'future'}),'42501');
+  } finally { await db.exec('reset role'); }
+  await db.exec('set role service_role');
+  try { await mutate('save_entry',{...rows[1],title:'Service future edit',scope:'future'}); }
+  finally { await db.exec('reset role'); }
 });

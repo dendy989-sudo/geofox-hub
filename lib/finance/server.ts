@@ -58,7 +58,10 @@ export async function loadFinanceData(context: HubContext, requestedMonth: strin
 export async function mutateFinance(context: HubContext, action: unknown, payload: unknown): Promise<Record<string, unknown>> {
   let mutation: ReturnType<typeof validateFinanceMutation>;
   try { mutation = validateFinanceMutation(action, payload); } catch (error) { return inputError(error); }
-  const { data, error } = await getHubService().rpc("finance_mutate", { p_actor: context.user.id, p_action: mutation.action, p_payload: mutation.payload });
+  // Future changes use an atomic owner-scoped RPC that also updates recurrence
+  // terms; legacy clients and single occurrences keep the original behavior.
+  const rpc = mutation.payload.scope === "future" ? "finance_mutate_recurring" : "finance_mutate";
+  const { data, error } = await getHubService().rpc(rpc, { p_actor: context.user.id, p_action: mutation.action, p_payload: mutation.payload });
   if (error) financeDatabaseError(error);
   return data as Record<string, unknown>;
 }
