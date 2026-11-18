@@ -24,6 +24,7 @@ const OperationsWorkflowsPanel = dynamic(() => import("@/components/ops/operatio
 const AlfredPanel = dynamic(() => import("@/components/alfred/alfred").then((module) => module.AlfredPanel), { loading: () => <Loading /> });
 const TasksPanel = dynamic(() => import("@/components/workspace/tasks").then((module) => module.TasksPanel), { loading: () => <Loading /> });
 const MarketingPanel = dynamic(() => import("@/components/workspace/marketing").then((module) => module.MarketingPanel), { loading: () => <Loading /> });
+const MarketingContentPanel = dynamic(() => import("@/components/workspace/marketing-content").then((module) => module.MarketingContentPanel), { loading: () => <Loading /> });
 const LegalPanel = dynamic(() => import("@/components/workspace/legal").then((module) => module.LegalPanel), { loading: () => <Loading /> });
 const AccountingPanel = dynamic(() => import("@/components/workspace/accounting").then((module) => module.AccountingPanel), { loading: () => <Loading /> });
 const ProfilePanel = dynamic(() => import("@/components/workspace/profile").then((module) => module.ProfilePanel), { loading: () => <Loading /> });
@@ -42,6 +43,7 @@ const navigation: Record<Area, NavItem[]> = {
     { id: "settings", label: "Connections & team", icon: "settings", capability: "settings:write", group: "manage" },
   ],
   marketing: [
+    { id: "content", label: "Content", icon: "layers" },
     { id: "calendar", label: "Content calendar", icon: "calendar" },
     { id: "posts", label: "Posts & drafts", icon: "edit" },
     { id: "grid", label: "Grid preview", icon: "grid" },
@@ -187,6 +189,7 @@ export function AdminWorkspace({ preview = false, initialAppId = "all" }: { prev
     if (activeArea === "alfred") return <AlfredPanel key={`alfred-${currentApp}`} {...props} tab={current?.id || "command"} />;
     if (!current) return <Empty icon="lock" title="No sections are assigned" description="Ask an owner to review your workspace access." />;
     if (activeArea === "tasks") return <TasksPanel key={`tasks-${currentApp}`} {...props} view={current.id} />;
+    if (activeArea === "marketing" && current.id === "content") return <MarketingContentPanel key={`content-${currentApp}`} {...props} />;
     if (activeArea === "marketing") return <MarketingPanel key={`marketing-${currentApp}`} {...props} view={current.id} />;
     if (activeArea === "legal") return <LegalPanel key={`legal-${currentApp}`} {...props} view={current.id} />;
     if (activeArea === "accounting") return <AccountingPanel key={`accounting-${currentApp}`} {...props} view={current.id} />;

@@ -26,6 +26,8 @@ export interface MarketingPost {
   notes: string;
   publication: Partial<Record<SocialPlatform, { url: string; publishedAt: string | null; metrics?: SocialMetrics }>>;
   flags: { platform: SocialPlatform; reason: string; sourceUrl: string; recordedAt: string; resolved: boolean }[];
+  sourceContentId?: string;
+  sourceApprovalAt?: string;
   delivery?: Partial<Record<SocialPlatform, { state: "publishing" | "published" | "failed" | "uncertain"; attemptId: string; startedAt: string; providerId?: string; caption?: string; error?: string }>>;
 }
 export interface MarketingAccount {
@@ -47,7 +49,26 @@ export interface MarketingConversation {
   repliedAt: string | null;
   source: "manual";
 }
-export type MarketingData = MarketingPost | MarketingAccount | MarketingConversation;
+export type ContentStatus = "draft" | "in_progress" | "in_review" | "approved" | "published" | "archived";
+export interface MarketingContent {
+  kind: "content";
+  isTemplate: boolean;
+  contentType: MarketingPost["contentType"];
+  platforms: SocialPlatform[];
+  brief: string;
+  script: string;
+  caption: string;
+  hashtags: string;
+  notes: string;
+  campaign: string;
+  media: MarketingMedia[];
+  thumbnail: MarketingMedia | null;
+  sourceTemplateId: string | null;
+  approval: { reviewedBy: string; reviewedAt: string } | null;
+  linkedPostId: string | null;
+}
+export type ContentRecord = WorkspaceRecord<MarketingContent>;
+export type MarketingData = MarketingPost | MarketingAccount | MarketingConversation | MarketingContent;
 export type MarketingRecord = WorkspaceRecord<MarketingData>;
 export type PostRecord = WorkspaceRecord<MarketingPost>;
 export interface ProviderCapability {

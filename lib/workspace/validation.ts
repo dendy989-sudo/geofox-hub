@@ -108,8 +108,27 @@ export function validateWorkspaceData(module: WorkspaceModule, status: string, v
     choice(status, ["open", "in_progress", "completed", "not_applicable", "archived"], "compliance status");
     return { dueDate: dateOnly(data.dueDate, "due date"), reviewDate: dateOnly(data.reviewDate, "review date"), amountCents: data.amountCents == null ? null : integer(data.amountCents, 0, 99999999999, "amount"), currency: choice(data.currency, ["USD"], "currency", "USD"), payee: text(data.payee, 200, "payee"), jurisdiction: text(data.jurisdiction, 200, "jurisdiction"), category: text(data.category, 120, "category"), recurrence: choice(data.recurrence, ["none", "monthly", "quarterly", "annual", "continuous"], "repeat frequency", "none"), sourceUrl: safeUrl(data.sourceUrl, "source link"), notes: text(data.notes, 10000, "notes"), condition: text(data.condition, 2000, "applicability"), starterKey: text(data.starterKey, 100, "template reference"), sourceCheckedAt: data.sourceCheckedAt ? dateOnly(data.sourceCheckedAt, "source review date") : undefined, completedAt: timestamp(data.completedAt, "completion time"), attachments: array(data.attachments, 20, "attachments").map(attachment) };
   }
-  const kind = choice(data.kind, ["post", "account", "inbox"], "marketing record type");
+  const kind = choice(data.kind, ["post", "account", "inbox", "content"], "marketing record type");
   if (previous?.kind && kind !== previous.kind) return invalid("A marketing record's type cannot be changed.");
+  if (kind === "content") {
+    choice(status, ["draft", "in_progress", "in_review", "approved", "published", "archived"], "content status");
+    const selected = array(data.platforms, 4, "social platforms").map(p => choice(p, platforms, "social platform"));
+    if (!selected.length || new Set(selected).size !== selected.length) return invalid("Choose at least one platform without duplicates.");
+    const isTemplate = data.isTemplate === undefined ? false : boolean(data.isTemplate, "template setting");
+    if (isTemplate && ["approved", "published"].includes(status)) return invalid("Use this template to create content before approving or publishing it.");
+    for (const field of ["approval", "linkedPostId"] as const) {
+      if (data[field] !== undefined && !same(data[field] ?? null, previous?.[field] ?? null)) return invalid("Approval and planner links are managed by the review workflow.");
+    }
+    const result = { kind, isTemplate, contentType: choice(data.contentType, ["photo", "video", "carousel", "text"], "content type", "video"), platforms: selected,
+      brief: text(data.brief, 10000, "creative brief"), script: text(data.script, 20000, "script and shot list"),
+      caption: text(data.caption, 10000, "caption"), hashtags: text(data.hashtags, 2500, "hashtags"), notes: text(data.notes, 10000, "internal notes"), campaign: text(data.campaign, 200, "campaign"),
+      media: array(data.media, 20, "media files").map(attachment), thumbnail: data.thumbnail == null ? null : attachment(data.thumbnail),
+      sourceTemplateId: data.sourceTemplateId == null || data.sourceTemplateId === "" ? null : uuid(data.sourceTemplateId, "source template"),
+      approval: previous?.approval ?? null, linkedPostId: previous?.linkedPostId ?? null,
+    };
+    if (["in_review", "approved"].includes(status) && !result.script && !result.caption && !result.media.length) return invalid("Add a script, caption, or media before sending content for review.");
+    return result;
+  }
   if (kind === "account") {
     choice(status, ["active", "archived"], "account status");
     return { kind, platform: choice(data.platform, platforms, "social platform"), handle: text(data.handle, 200, "account handle", true), profileUrl: safeUrl(data.profileUrl, "profile link"), notes: text(data.notes, 10000, "notes") };
@@ -142,6 +161,10 @@ export function validateWorkspaceData(module: WorkspaceModule, status: string, v
     } else if ((previousPublication[platform]?.metrics as Record<string, unknown> | undefined)?.source === "provider") result.metrics = previousPublication[platform].metrics;
     publication[platform] = result;
   }
+  // A source review cannot be forged, detached, or reassigned in the planner.
+  for (const field of ["sourceContentId", "sourceApprovalAt"] as const) {
+    if (data[field] !== undefined && !same(data[field], previous?.[field])) return invalid("The content review link is managed by the Content workspace.");
+  }
   // Delivery attempts and provider IDs are written exclusively by the provider worker.
   if (data.delivery !== undefined && !same(data.delivery, previous?.delivery)) return invalid("Social delivery details cannot be edited manually.");
   const delivery = previous?.delivery as Record<string, Record<string, unknown>> | undefined;
@@ -153,7 +176,7 @@ export function validateWorkspaceData(module: WorkspaceModule, status: string, v
       publication[platform] = publication[platform] ? { ...publication[platform], url: item.url, publishedAt: item.publishedAt } : item;
     }
   }
-  return { kind, platforms: selected, caption: text(data.caption, 10000, "caption"), hashtags: text(data.hashtags, 2500, "hashtags"), mentions: text(data.mentions, 2500, "mentions"), media: array(data.media, 20, "media files").map(attachment), thumbnail: data.thumbnail == null ? null : attachment(data.thumbnail), scheduledAt: timestamp(data.scheduledAt, "scheduled time", status === "scheduled"), timeZone, publishedAt: timestamp(data.publishedAt, "published time"), contentType: choice(data.contentType, ["photo", "video", "carousel", "text"], "content type"), campaign: text(data.campaign, 200, "campaign"), notes: text(data.notes, 10000, "notes"), publication, flags: array(data.flags, 100, "post flags").map(value => { const flag = object(value, "post flag"); return { platform: choice(flag.platform, platforms, "social platform"), reason: text(flag.reason, 2000, "flag reason", true), sourceUrl: safeUrl(flag.sourceUrl, "flag source"), recordedAt: timestamp(flag.recordedAt, "flag time", true), resolved: boolean(flag.resolved, "flag status") }; }), ...(delivery ? { delivery } : {}) };
+  return { kind, platforms: selected, caption: text(data.caption, 10000, "caption"), hashtags: text(data.hashtags, 2500, "hashtags"), mentions: text(data.mentions, 2500, "mentions"), media: array(data.media, 20, "media files").map(attachment), thumbnail: data.thumbnail == null ? null : attachment(data.thumbnail), scheduledAt: timestamp(data.scheduledAt, "scheduled time", status === "scheduled"), timeZone, publishedAt: timestamp(data.publishedAt, "published time"), contentType: choice(data.contentType, ["photo", "video", "carousel", "text"], "content type"), campaign: text(data.campaign, 200, "campaign"), notes: text(data.notes, 10000, "notes"), publication, flags: array(data.flags, 100, "post flags").map(value => { const flag = object(value, "post flag"); return { platform: choice(flag.platform, platforms, "social platform"), reason: text(flag.reason, 2000, "flag reason", true), sourceUrl: safeUrl(flag.sourceUrl, "flag source"), recordedAt: timestamp(flag.recordedAt, "flag time", true), resolved: boolean(flag.resolved, "flag status") }; }), ...(delivery ? { delivery } : {}), ...(previous?.sourceContentId ? { sourceContentId: previous.sourceContentId, sourceApprovalAt: previous.sourceApprovalAt } : {}) };
 }
 export function recordAttachments(data: Record<string, unknown>): WorkspaceAttachment[] {
   return [...(Array.isArray(data.attachments) ? data.attachments : []), ...(Array.isArray(data.media) ? data.media : []), ...(data.thumbnail ? [data.thumbnail] : [])] as WorkspaceAttachment[];

@@ -99,6 +99,17 @@ export async function saveWorkspaceRecord(context: HubContext, input: Row, id?: 
   if (existing) assertRecordMutationAllowed(existing, version!, app);
   assertWorkspaceAccess(context, module, "write", app);
   const data = validateWorkspaceData(module, status, Object.hasOwn(input, "data") ? input.data : existing?.data, existing?.data);
+  if (module === "marketing" && data.kind === "content") {
+    if (status === "approved" && existing?.status !== "approved") {
+      if (context.staff.role !== "owner") throw new HubError(403, "OWNER_REVIEW_REQUIRED", "Only the owner can approve marketing content.");
+      if (!existing || existing.status !== "in_review") throw new WorkspaceInputError("Save this content and send it for review before approving it.");
+    }
+    if (existing?.data.linkedPostId && app !== existing.appSlug) throw new WorkspaceInputError("Content linked to a planner post must keep its original app or company scope.");
+    if (data.sourceTemplateId && (data.sourceTemplateId !== existing?.data.sourceTemplateId || app !== existing?.appSlug)) {
+      const template = await getWorkspaceRecord(context, String(data.sourceTemplateId));
+      if (template.module !== "marketing" || template.data.kind !== "content" || template.data.isTemplate !== true || template.appSlug !== app) throw new WorkspaceInputError("Choose a content template from the same app or company scope.");
+    }
+  }
   const saved = await workspaceRpc<Row>("hub_workspace_save", {
     p_actor: context.user.id, p_id: id ?? null, p_version: version, p_module: module,
     p_app: app, p_title: title, p_status: status, p_data: data,
@@ -112,6 +123,10 @@ export async function deleteWorkspaceRecord(context: HubContext, id: string, ver
   const checkedVersion = integer(version, 1, 2147483647, "record version");
   const existing = await getWorkspaceRecord(context, id, "write");
   assertRecordMutationAllowed(existing, checkedVersion);
+  if (existing.module === "marketing") {
+    if (existing.data.kind === "content" && existing.data.linkedPostId) throw new HubError(409, "LINKED_CONTENT", "Archive this content instead of deleting it so its planner review remains available.");
+    if (existing.data.kind === "post" && existing.data.sourceContentId) throw new HubError(409, "LINKED_CONTENT", "Cancel this post instead of deleting it so its source content keeps its planner link.");
+  }
   await workspaceRpc("hub_workspace_delete", { p_actor: context.user.id, p_id: existing.id, p_version: checkedVersion });
   return { deleted: true };
 }
