@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { staffReturnPath } from "@/lib/auth/return-path";
 import "./auth.css";
 
 export function AuthPanel({ configured, passwordUpdate = false, nextPath = "/admin" }: { configured: boolean; passwordUpdate?: boolean; nextPath?: string }) {
@@ -39,7 +40,7 @@ export function AuthPanel({ configured, passwordUpdate = false, nextPath = "/adm
         const totp = factors.data?.totp.find(f => f.status === "verified");
         if (!totp) throw new Error("Complete your account’s verification before opening the hub.");
         setFactorId(totp.id); setPassword(""); setMessage("Enter the code from your authenticator app.");
-      } else { router.replace(nextPath === "/finance" ? "/finance" : "/admin"); router.refresh(); }
+      } else { router.replace(staffReturnPath(nextPath)); router.refresh(); }
     } catch (e) { setError(e instanceof Error ? e.message : "Sign-in could not be completed."); }
     finally { setBusy(false); }
   }
