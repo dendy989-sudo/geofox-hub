@@ -2,3 +2,9 @@
 /* Keep navigation scrollable by touch, wheel and keyboard without a divider scrollbar. */
 .hub-company-root .hub-area-rail,.hub-company-root .hub-sidebar{scrollbar-width:none;overflow-x:hidden;-ms-overflow-style:none}
 .hub-company-root .hub-area-rail::-webkit-scrollbar,.hub-company-root .hub-sidebar::-webkit-scrollbar{display:none;width:0;height:0}
+.hub-area-button.hub-workspace-switch{background:#7460be;color:#fff;border:1px solid #9481d6;box-shadow:0 4px 12px #0002;margin-bottom:4px}
+.hub-area-button.hub-workspace-switch:hover{background:#8973d1;color:#fff}
+.hub-area-button.hub-workspace-switch:focus-visible{outline-color:#d5caff}
+.personal-rail-error{position:fixed;left:calc(var(--hub-rail-width) + 12px);bottom:20px;z-index:90;display:flex;gap:12px;align-items:flex-start;max-width:min(340px,calc(100vw - var(--hub-rail-width) - 25px));padding:15px 18px;border:1px solid #efc6cf;border-radius:10px;background:#fff2f4;color:#a04459;box-shadow:0 8px 25px #26344e15;font-size:12px;line-height:1.7}
+.personal-rail-error p{margin:0}
+.personal-rail-error button{display:grid;place-items:center;padding:3px;background:none;border:0;color:inherit}
