@@ -35,7 +35,9 @@ insert into public.hub_staff(user_id,display_name,role,active) values
 insert into public.hub_staff_apps(user_id,app_slug) values('${support}','novanook'),('${analyst}','novanook'),('${inactive}','novanook'),('${banned}','novanook'),('${unverified}','novanook');
 `);
 const migration=await readFile(new URL('../supabase/migrations/20261104151508_company_workspace.sql',import.meta.url),'utf8');
+const contentMigration=await readFile(new URL('../supabase/migrations/20261118135413_marketing_content_library.sql',import.meta.url),'utf8');
 await db.exec(migration);
+await db.exec(contentMigration);
 async function one(sql,params=[]){return (await db.query(sql,params)).rows[0];}
 async function rpc(name,params=[]){const args=params.map((_,i)=>`$${i+1}`).join(','); return (await one(`select public.${name}(${args}) as result`,params)).result;}
 const denied=(call,code='42501')=>assert.rejects(call,e=>e.code===code);
@@ -51,6 +53,7 @@ const auditCount=async()=>Number((await one('select count(*) as n from public.hu
 
 test('migration is replayable and all private tables and functions reject browser roles',async()=>{
  await db.exec(migration);
+ await db.exec(contentMigration);
  for(const table of ['hub_staff_modules','hub_workspace_records','hub_workspace_uploads']){
   assert.equal((await one('select relrowsecurity from pg_class where oid=$1::regclass',[`public.${table}`])).relrowsecurity,true);
   for(const role of ['anon','authenticated']) assert.equal((await one("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE') as allowed",[role,`public.${table}`])).allowed,false);

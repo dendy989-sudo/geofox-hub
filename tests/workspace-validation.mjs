@@ -160,3 +160,13 @@ test('finished attempts retain their scope but allow normal edits and deletions'
   assert.equal(server.writes().length,2);
  }
 });
+
+
+test('generic API deletion preserves linked content and its planner post',async()=>{
+ const base=marketingRow();
+ for(const data of [{kind:'content',linkedPostId:'20000000-0000-4000-8000-000000000002'},{...base.data,sourceContentId:'20000000-0000-4000-8000-000000000002'}]){
+  const server=mutationServer({...base,data});
+  await assert.rejects(server.api.deleteWorkspaceRecord(publishingContext,base.id,base.version),conflict('LINKED_CONTENT'));
+  assert.equal(server.writes().length,0);
+ }
+});
