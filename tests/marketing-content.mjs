@@ -20,7 +20,7 @@ await db.exec(`insert into public.hub_apps(slug,name,website) values('otherapp',
 insert into public.hub_staff(user_id,display_name,role,active) values('${writer}','Writer','support',true),('${reader}','Reader','analyst',true),('${inactive}','Inactive','owner',false);
 insert into public.hub_staff_apps(user_id,app_slug) values('${writer}','novanook'),('${reader}','novanook');`);
 await db.exec(await readFile(new URL('../supabase/migrations/20261104151508_company_workspace.sql',import.meta.url),'utf8'));
-const migration = await readFile(new URL('../supabase/migrations/20261118135413_marketing_content_library.sql',import.meta.url),'utf8');
+const migration = await readFile(new URL('../supabase/migrations/20261118142513_marketing_content_library.sql',import.meta.url),'utf8');
 await db.exec(migration);
 async function rpc(name, params=[]) { return (await db.query(`select public.${name}(${params.map((_,i)=>`$${i+1}`).join(',')}) as result`,params)).rows[0].result; }
 await rpc('hub_workspace_set_access',[owner,writer,JSON.stringify({marketing:'write'})]);
