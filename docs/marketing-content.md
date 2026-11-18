@@ -15,7 +15,7 @@ Editing approved creative clears approval. Internal feedback alone preserves it.
 
 ## Deployment
 
-Apply `supabase/migrations/20261118135413_marketing_content_library.sql` to the existing Geofox Hub database before deploying the frontend. It extends current private workspace RPCs; it does not introduce tables, grant browser access, or alter existing RLS. No content drafts or production media are committed to the public repository.
+Apply `supabase/migrations/20261118142513_marketing_content_library.sql` to the existing Geofox Hub database before deploying the frontend. It extends current private workspace RPCs; it does not introduce tables, grant browser access, or alter existing RLS. No content drafts or production media are committed to the public repository.
 
 Checks: `npm run typecheck`, `npm run test:marketing`, `npm run test:workspace`, and `npm run build`. Focused SQL tests cover scoped permissions, owner approval, metadata spoofing, concurrent versions, private attachments, stale reviews, idempotent handoff, publication, and deletion guards.
 

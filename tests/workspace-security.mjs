@@ -35,7 +35,7 @@ insert into public.hub_staff(user_id,display_name,role,active) values
 insert into public.hub_staff_apps(user_id,app_slug) values('${support}','novanook'),('${analyst}','novanook'),('${inactive}','novanook'),('${banned}','novanook'),('${unverified}','novanook');
 `);
 const migration=await readFile(new URL('../supabase/migrations/20261104151508_company_workspace.sql',import.meta.url),'utf8');
-const contentMigration=await readFile(new URL('../supabase/migrations/20261118135413_marketing_content_library.sql',import.meta.url),'utf8');
+const contentMigration=await readFile(new URL('../supabase/migrations/20261118142513_marketing_content_library.sql',import.meta.url),'utf8');
 await db.exec(migration);
 await db.exec(contentMigration);
 async function one(sql,params=[]){return (await db.query(sql,params)).rows[0];}
