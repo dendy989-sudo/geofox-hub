@@ -162,6 +162,21 @@ test("failed batches roll back both records and audit entries", async () => {
   assert.equal((await row("select count(*)::int n from public.tax_audit where record_id=$1", [valid.id])).n, 0);
 });
 
+test("bulk classification plus remembered rule commit atomically and honor versions", async()=>{
+  const club=await save(business());
+  const first=await save(transaction(null,{scope:"unresolved",business_id:null,source_row:undefined}));
+  const second=await save(transaction(null,{scope:"unresolved",business_id:null,source_row:undefined}));
+  const classify=tx=>({...tx,version:tx.version,data:{...tx.data,scope:"business",business_id:club.id,business_percent:100,category:"other_expenses",review_status:"confirmed",manual_override:true,deduction_confirmed:false,deduction_percent:null,rule_id:null}});
+  const rule={id:randomUUID(),kind:"rule",tax_year:null,title:"UPSL classification",data:{match:"UPSL League Fee",match_type:"exact",scope:"business",business_id:club.id,business_percent:100,category:"other_expenses",deduction_confirmed:false,deduction_percent:null,enabled:true,notes:"Synthetic regression test"}};
+  const result=await batch([rule,classify(first),classify(second)]);
+  assert.equal(result.length,3);
+  assert.equal((await row("select count(*)::int n from public.tax_records where id=any($1::uuid[]) and data->>'review_status'='confirmed'",[[first.id,second.id]])).n,2);
+  const otherRule={...rule,id:randomUUID(),title:"Second vendor rule"};
+  await denied(()=>batch([otherRule,classify(first)]),["40001"]);
+  assert.equal((await row("select count(*)::int n from public.tax_records where id=$1",[otherRule.id])).n,0);
+  assert.equal((await row("select count(*)::int n from public.tax_audit where record_id=$1",[otherRule.id])).n,0);
+});
+
 test("dates and amounts are checked in the database even below route validation", async () => {
   for (const data of [
     { amount_cents: -1.5 }, { amount_cents: 1000000000001 },

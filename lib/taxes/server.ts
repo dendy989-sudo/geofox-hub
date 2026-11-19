@@ -4,6 +4,8 @@ import { z } from "zod";
 import { requireFinanceContext } from "@/lib/finance/server";
 import { getHubService, HubError, type HubContext } from "@/lib/hub/server";
 import { applyRuleToTransaction, ruleMatches } from "./model";
+import { bulkTransactionData, merchantKey, specificMerchant, BULK_SCOPES } from "./bulk";
+import { TAX_CATEGORIES, type TaxCategory } from "./types";
 import { validateTaxSave, yearSchema } from "./validation";
 import type { TaxRecord, TaxSave, TaxSnapshot, TransactionData } from "./types";
 
@@ -105,6 +107,73 @@ export async function mutateTax(context:HubContext,input:Record<string,unknown>)
     if(input.preview_token!==digest)throw new HubError(409,"RULE_PREVIEW_CHANGED","The matching transactions changed. Review the rule preview again before applying.");
     if(updates.length)await taxRpc("taxes_save_batch",{p_actor:context.user.id,p_records:updates});
     return {updated:updates.length,skipped};
+  }
+  if(input.action==="bulk_edit"){
+    const checked=z.object({
+      year:yearSchema,
+      items:z.array(z.object({id:z.uuid(),version:z.number().int().positive()}).strict()).min(1).max(200),
+      scope:z.enum(BULK_SCOPES),
+      business_id:z.uuid().nullable().default(null),
+      business_percent:z.number().min(0).max(100).default(0),
+      category:z.enum(TAX_CATEGORIES.map(item=>item.id) as [TaxCategory,...TaxCategory[]]).default("uncategorized"),
+      remember_vendor:z.boolean().default(false),
+    }).safeParse(input);
+    if(!checked.success)return taxInputError(checked.error);
+    const choice=checked.data;
+    if(new Set(choice.items.map(item=>item.id)).size!==choice.items.length)throw new HubError(400,"DUPLICATE_SELECTION","Select each transaction once.");
+    const business=choice.scope==="business"||choice.scope==="mixed";
+    if(business){
+      if(!choice.business_id)throw new HubError(400,"BUSINESS_REQUIRED","Choose the business for this batch.");
+      if(choice.category==="uncategorized")throw new HubError(400,"CATEGORY_REQUIRED","Choose a category before confirming these business transactions.");
+      if(choice.scope==="business"&&choice.business_percent!==100)throw new HubError(400,"PERCENT_INVALID","Business classification must be 100% business.");
+      if(choice.scope==="mixed"&&(choice.business_percent<=0||choice.business_percent>=100))throw new HubError(400,"PERCENT_INVALID","Mixed classification needs a business share between 0 and 100%.");
+      await getTaxRecord(context,choice.business_id,"business");
+    }else if(choice.business_id!==null||choice.business_percent!==0||choice.category!=="uncategorized"){
+      throw new HubError(400,"CLASSIFICATION_INVALID","Only business or mixed items can have a business and tax category.");
+    }
+    if(choice.remember_vendor&&!["personal","business","mixed"].includes(choice.scope)){
+      throw new HubError(400,"RULE_SCOPE_INVALID","Only personal or business allocations can be remembered as vendor rules here.");
+    }
+    const ids=choice.items.map(item=>item.id);
+    const {data,error}=await getHubService().from("tax_records")
+      .select("id,kind,tax_year,title,data,version,archived,created_at,updated_at")
+      .eq("user_id",context.user.id).eq("kind","transaction").eq("tax_year",choice.year).eq("archived",false).in("id",ids);
+    if(error)taxDatabaseError(error);
+    const byId=new Map((data??[]).map(record=>[record.id,record as TaxRecord]));
+    if(byId.size!==ids.length)throw new HubError(409,"TAX_RECORD_CHANGED","One of these transactions is no longer available. Refresh and select again.");
+    const rows=choice.items.map(item=>{
+      const row=byId.get(item.id)!;
+      if(row.version!==item.version)throw new HubError(409,"TAX_RECORD_CHANGED","At least one selected transaction changed. Refresh before editing.");
+      return row;
+    });
+    let newRule:TaxSave|undefined;
+    if(choice.remember_vendor){
+      const merchant=merchantKey(rows[0]);
+      if(!specificMerchant(merchant)||rows.some(row=>merchantKey(row)!==merchant))
+        throw new HubError(400,"VENDOR_NOT_UNIFORM","To remember a vendor, select only charges from one specific vendor or description. You can still bulk edit mixed vendors without a rule.");
+      const {data:allRules,error:ruleError}=await getHubService().from("tax_records")
+        .select("id,kind,tax_year,title,data,version,archived,created_at,updated_at")
+        .eq("user_id",context.user.id).eq("kind","rule").eq("archived",false);
+      if(ruleError)taxDatabaseError(ruleError);
+      if((allRules??[]).some(rule=>ruleMatches(rule as TaxRecord,rows[0])))
+        throw new HubError(409,"VENDOR_RULE_EXISTS","A vendor rule already matches these transactions. Open Vendor rules to edit it or apply it to saved records.");
+      newRule=validateTaxSave({
+        id:randomUUID(),kind:"rule",tax_year:null,title:`${merchant.slice(0,155)} · classification`,
+        data:{match:merchant,match_type:"exact",scope:choice.scope,business_id:business?choice.business_id:null,
+          business_percent:choice.scope==="business"?100:choice.scope==="mixed"?choice.business_percent:0,
+          category:business?choice.category:"uncategorized",deduction_percent:null,deduction_confirmed:false,
+          enabled:true,notes:"Saved from owner-approved bulk classification. This rule never confirms deduction eligibility."}
+      });
+    }
+    const updates:TaxSave[]=rows.map(row=>{
+      try{return validateTaxSave({id:row.id,kind:"transaction",tax_year:row.tax_year,title:row.title,version:row.version,
+        data:bulkTransactionData(row,choice)});}
+      catch(e){return taxInputError(e);}
+    });
+    // Single owner-locked SQL transaction: either the new rule and all selected
+    // classifications commit together, or none of them changes.
+    const saved=await taxRpc<TaxRecord[]>("taxes_save_batch",{p_actor:context.user.id,p_records:[...(newRule?[newRule]:[]),...updates]});
+    return {updated:updates.length,rule:newRule?saved[0]:null,cleared_deduction_approvals:rows.filter(row=>row.data.deduction_confirmed===true).length};
   }
   if(input.action==="confirm_transactions"){
     const checked=z.object({items:z.array(z.object({id:z.uuid(),version:z.number().int().positive()})).min(1).max(200),deduction_percent:z.number().min(0).max(100).optional()}).safeParse(input);

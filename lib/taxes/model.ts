@@ -3,6 +3,12 @@ import { TAX_CATEGORIES, type TaxRecord, type TaxReport, type TransactionData, t
 export function taxLabel(value: unknown): string { return String(value ?? "").replaceAll("_", " "); }
 export function money(cents: number): string { return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100); }
 export function normalizeVendor(value: unknown): string { return String(value ?? "").normalize("NFKC").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim().replace(/\s+/g, " "); }
+/** Prefer a specific merchant; fall back to description for generic processor labels. */
+export function merchantIdentity(data:{vendor?:unknown;description?:unknown}):string {
+  const vendor=normalizeVendor(data.vendor);
+  if(vendor.length>=4 && !/^(PURCHASE|PAYMENT|DEBIT|CREDIT|CARD|POS|ACH|TRANSFER|CHECK|UNKNOWN|OTHER|WITHDRAWAL|DEPOSIT|ONLINE PAYMENT|CARD PURCHASE|DEBIT CARD PURCHASE|POS PURCHASE)$/.test(vendor))return vendor;
+  return normalizeVendor(data.description)||vendor;
+}
 export function percentOf(cents: number, percent: number): number { return Math.sign(cents) * Math.round(Math.abs(cents) * Math.round(percent * 100) / 10000); }
 export function parseAmountCents(value: string): number {
   const trimmed = value.trim();
@@ -29,7 +35,7 @@ export function ruleMatches(rule: TaxRecord<RuleData> | TaxRecord, transaction: 
   const data = "data" in transaction ? transaction.data as TransactionData : transaction as TransactionData;
   const match = normalizeVendor(rule.data.match);
   if (!match) return false;
-  const vendor = normalizeVendor(data.vendor || data.description);
+  const vendor = merchantIdentity(data);
   return rule.data.match_type === "exact" ? vendor === match : (` ${vendor} `).includes(` ${match} `);
 }
 export function applyRuleToTransaction(rule: TaxRecord, transaction: TransactionData): TransactionData {
