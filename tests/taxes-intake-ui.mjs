@@ -77,3 +77,13 @@ test("supporting IRS documents retain private originals without offering transac
   assert.doesNotMatch(html, /Review transactions/);
   assert.doesNotMatch(html, /Account not available/);
 });
+
+test("bulk editor offers explicit classifications, category and opt-in future merchant rule",()=>{
+  const {TaxBulkEditDialog}=load("components/taxes/bulk-edit-dialog.tsx");
+  const items=[record("tx1","transaction",{vendor:"UPSL League Fee",description:"UPSL league",date:"2024-04-01",amount_cents:-10000,review_status:"needs_review"},2024),record("tx2","transaction",{vendor:"UPSL League Fee",description:"UPSL league",date:"2024-05-01",amount_cents:-10000,review_status:"needs_review"},2024)];
+  const business=record("business","business",{reporting_treatment:"needs_review"},null);
+  const html=renderToStaticMarkup(React.createElement(TaxBulkEditDialog,{items,businesses:[business],rules:[],onClose(){},onApply:async()=>{assert.fail("Only explicit submit may edit");}}));
+  assert.match(html,/Bulk edit/);assert.match(html,/Personal/);assert.match(html,/Mixed personal and business/);
+  assert.match(html,/Remember this vendor next time/);assert.match(html,/UPSL LEAGUE FEE/);
+  assert.doesNotMatch(html,/<input[^>]*type="checkbox"[^>]*checked/); // never preselect a reusable rule
+});
