@@ -1007,7 +1007,7 @@ test('household labels never grant access or let another approved owner alter de
 
 test('household migration is repeatable with assignments, shared collections and private grants intact', async () => {
   const before=await snapshot(); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); assert.deepEqual(await snapshot(),before);
-  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,21);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,24);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
 });
@@ -1219,8 +1219,8 @@ test('tag and recurrence failures leave no partial series, plans or altered fina
 
 test('tag migration reapplication preserves quarterly schedules, archived links, customized installments and money', async () => {
   const before=await snapshot(); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); assert.deepEqual(await snapshot(),before);
-  assert.equal((await one("select count(*)::int n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relname like 'finance_%'")).n,18);
-  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%'")).n,21);
+  assert.equal((await one("select count(*)::int n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relname like 'finance_%'")).n,19);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%'")).n,24);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_tags','DELETE,TRUNCATE,REFERENCES,TRIGGER') granted")).granted,false);
 });
