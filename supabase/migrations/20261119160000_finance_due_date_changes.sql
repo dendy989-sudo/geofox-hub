@@ -3,14 +3,20 @@
 alter table public.finance_entries add column if not exists recurrence_slot_date date;
 update public.finance_entries set recurrence_slot_date=original_due_date
   where series_id is not null and recurrence_slot_date is null;
-alter table public.finance_entries add constraint finance_entries_series_slot_key
-  unique(series_id,recurrence_slot_date);
-alter table public.finance_entries add constraint finance_entries_slot_required
-  check (series_id is null or recurrence_slot_date is not null);
+do $migration$
+begin
+  if not exists (select 1 from pg_constraint where conname='finance_entries_series_slot_key' and conrelid='public.finance_entries'::regclass) then
+    alter table public.finance_entries add constraint finance_entries_series_slot_key unique(series_id,recurrence_slot_date);
+  end if;
+  if not exists (select 1 from pg_constraint where conname='finance_entries_slot_required' and conrelid='public.finance_entries'::regclass) then
+    alter table public.finance_entries add constraint finance_entries_slot_required check (series_id is null or recurrence_slot_date is not null);
+  end if;
+end;
+$migration$;
 
 -- Future changes are effective from a recurrence SLOT, not the new display date.
 -- Earlier materialized and unmaterialized bills keep the former schedule.
-create table public.finance_series_due_rules (
+create table if not exists public.finance_series_due_rules (
   series_id uuid not null, user_id uuid not null,
   effective_from date not null,
   target_day integer, offset_days integer,
@@ -22,7 +28,7 @@ create table public.finance_series_due_rules (
   check (target_day is null or target_day between 1 and 31),
   check (offset_days is null or offset_days between -31 and 31)
 );
-create index finance_series_due_rules_owner_idx on public.finance_series_due_rules(user_id);
+create index if not exists finance_series_due_rules_owner_idx on public.finance_series_due_rules(user_id);
 alter table public.finance_series_due_rules enable row level security;
 revoke all on public.finance_series_due_rules from public,anon,authenticated,service_role;
 grant select,insert,update on public.finance_series_due_rules to service_role;
