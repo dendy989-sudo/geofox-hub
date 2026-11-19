@@ -240,13 +240,13 @@ test("debit and credit mapping normalizes direction and refuses ambiguous double
   assert.throws(() => parseStatementCsv("Date,Description,Debit,Credit\n01/01/2020,Bad sign,-10,", 2020), /positive debit/);
 });
 
-test("CSV date formats are explicit and invalid dates or wrong-year rows are never normalized away", () => {
+test("CSV date formats preserve posted dates including adjacent tax years", () => {
   assert.equal(parseBankDate("10/11/2020", "mdy"), "2020-10-11");
   assert.equal(parseBankDate("10/11/2020", "dmy"), "2020-11-10");
   assert.equal(parseBankDate("2020/2/29", "ymd"), "2020-02-29");
   assert.equal(parseBankDate("01/02/18", "mdy"), "2018-01-02");
   for (const input of ["2021-02-29", "2020-11-31", "2020-00-01", "2020-01-00"]) assert.throws(() => parseBankDate(input));
-  assert.throws(() => parseStatementCsv("Date,Description,Amount\n12/31/2019,Prior year,-100", 2020), /belongs to 2019/);
+  assert.deepEqual(parseStatementCsv("Date,Description,Amount\n12/31/2019,Prior year,-100\n01/02/2020,Current year,-20", 2020).rows.map(row=>row.date),["2019-12-31","2020-01-02"]);
 });
 
 test("unknown CSV layouts stay reviewable and malformed rows are never silently dropped", () => {
