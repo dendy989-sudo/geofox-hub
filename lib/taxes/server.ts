@@ -32,7 +32,16 @@ export async function taxReserve(context:HubContext,category:string,limit=30,win
   const allowed=await taxRpc<boolean>("hub_reserve_rate_limit",{p_key_hash:key,p_window_seconds:window,p_limit:limit});
   if(!allowed)throw new HubError(429,"TAXES_RATE_LIMITED","Please wait a moment before starting another tax request.");
 }
-export function taxAiAvailable() { return Boolean(process.env.AI_GATEWAY_API_KEY||process.env.VERCEL_OIDC_TOKEN); }
+// In deployed Vercel Functions, the AI SDK reads the OIDC token from the
+// invocation header. VERCEL_OIDC_TOKEN is primarily available for local CLI use.
+// Project OIDC must remain enabled for the deployment-authenticated path.
+export function taxAiAvailable() {
+  return Boolean(
+    process.env.AI_GATEWAY_API_KEY ||
+    process.env.VERCEL_OIDC_TOKEN ||
+    (process.env.VERCEL_ENV === "production" || process.env.VERCEL_ENV === "preview")
+  );
+}
 export async function getTaxRecord(context:HubContext,id:string,kind?:string):Promise<TaxRecord> {
   if(!z.uuid().safeParse(id).success)throw new HubError(400,"INVALID_TAX_INPUT","Choose a valid tax record.");
   const {data,error}=await getHubService().from("tax_records").select("id,kind,tax_year,title,data,version,archived,created_at,updated_at").eq("id",id).eq("user_id",context.user.id).eq("archived",false).maybeSingle();
