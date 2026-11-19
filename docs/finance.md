@@ -19,12 +19,13 @@ Apply the finance migrations after the existing Hub migrations, in this order:
 5. [20261105201038_finance_debt_household_people.sql](../supabase/migrations/20261105201038_finance_debt_household_people.sql) adds optional household names to credit and collection records, validates them, and keeps assignment changes in debt history. Existing debts begin with no names; balances, dates, status, offers, and prior history remain unchanged.
 6. [20261106012309_finance_tags_quarterly_history.sql](../supabase/migrations/20261106012309_finance_tags_quarterly_history.sql) adds reusable owner-scoped tags, tag associations on entries/series/plans, quarterly schedules, and custom date lists that can start before the initially chosen date. Existing records remain untagged; original obligations and recorded payments are preserved.
 7. [20261115185530_finance_recurring_bill_scope.sql](../supabase/migrations/20261115185530_finance_recurring_bill_scope.sql) adds effective-dated recurring bill terms and a cancellation cutoff, plus the private RPC for changes to this and future bills. Existing series, occurrences, and payment history are preserved until an owner explicitly applies a scoped change.
+8. [20261119160000_finance_due_date_changes.sql](../supabase/migrations/20261119160000_finance_due_date_changes.sql) allows the owner to correct a bill's original due date for one occurrence or from that occurrence forward. It stores immutable recurrence slots and scoped due-date rules so existing edited bills are not generated a second time; paid and cancelled history is retained.
 
 Both `/finance` and `/api/finance` enforce owner access. Requests use the server-verified user ID, and database functions recheck the allowlist and ownership. All finance tables enable RLS and deny direct access to `anon` and `authenticated`; only the server role can use the finance functions. The browser cannot update `finance_access`. The page also requests no search indexing. Public availability will require an intentional access-model change, not just a navigation link.
 
 ### Database inventory
 
-All eighteen app tables are in `public` with the `finance_` prefix. The migrations also define twenty-one `finance_*` functions, including internal validation/calculation helpers; direct client roles cannot call these functions:
+Finance tables are in `public` with the `finance_` prefix. The migrations define private `finance_*` functions, including internal validation/calculation helpers; direct client roles cannot call these functions:
 
 | Table | Purpose |
 | --- | --- |
@@ -39,6 +40,7 @@ All eighteen app tables are in `public` with the `finance_` prefix. The migratio
 | `finance_goal_history` | Savings allocation changes, notes, and archive/restore history |
 | `finance_series` | Repeating bill and income definitions, including inherited tags and the effective cancellation date |
 | `finance_series_terms` | Effective-dated changes to recurring bill defaults, applied from an original due date forward |
+| `finance_series_due_rules` | Owner-only effective-date rules for corrected original recurring due dates |
 | `finance_plans` | Finite installment and payment-plan agreements, including default tags |
 | `finance_entries` | Individual bills, income, generated occurrences/installments, and their direct tag associations |
 | `finance_payments` | Actual payment/receipt ledger, immutable account/method snapshots, and retained reversed records |
@@ -72,7 +74,9 @@ Add accounts in **Banks & cards** with a balance at the start of their opening d
 
 ### Original dates, planned dates, and actual payments
 
-An entry retains its original due date and original amount after creation. **Move date** changes the planned payment date and adds a “Moved” indicator. Original-month totals continue to show what was originally owed, including obligations later cancelled or transferred. An active unpaid bill remains past due after its original due date even when postponed. Older outstanding bills remain visible in the overdue view; they enter a later month's forecast only when scheduled there.
+An entry stores its original due date and original amount separately from its planned payment date. In **Manage bill**, choose a new **Original due date** and click **Update original due date** to correct the true obligation date. For recurring bills, choose **This bill only** or **This and future bills** first; later uncreated and unpaid bills follow the updated date, but earlier, fully paid and cancelled bills do not change. Monthly, quarterly and yearly schedules use the selected day of the same calendar month (clamped to the last valid day in shorter months). Weekly and custom schedules use a shift of up to 31 days. Dates on a payment-plan installment remain fixed to its agreement. Due-date corrections are separate from other bill-field edits.
+
+**Move date** changes only the planned payment date and adds a “Moved” indicator. Original-month totals continue to show what was originally owed, including obligations later cancelled or transferred. An active unpaid bill remains past due after its original due date even when postponed. Older outstanding bills remain visible in the overdue view; they enter a later month's forecast only when scheduled there.
 
 Past-due bill labels show the number of whole calendar days since the **original due date**. A bill due today is zero days overdue; the following day is one day overdue. Partial payments, moving the planned date, and archiving do not reset this count. Fully paying, cancelling, or transferring the bill to collections stops its overdue-bill label. Counts use calendar dates, so daylight-saving changes do not add or remove a day.
 

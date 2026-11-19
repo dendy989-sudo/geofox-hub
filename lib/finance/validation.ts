@@ -131,7 +131,7 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
   if (!payloadValue || typeof payloadValue !== "object" || Array.isArray(payloadValue)) return fail("Enter the details for this change.");
   const p = payloadValue as Record<string, unknown>;
   const scope = p.scope === undefined ? undefined : choice(p.scope, ["single", "future"], "bill change scope");
-  if (scope !== undefined && action !== "save_entry" && action !== "entry_status") return fail("Choose a scope when editing or cancelling a bill.");
+  if (scope !== undefined && action !== "save_entry" && action !== "entry_status" && action !== "change_due_date") return fail("Choose a scope when editing or cancelling a bill.");
   const id = () => uuid(p.id);
   const optionalId = () => uuid(p.id, "Record", true);
   let result: Record<string, unknown>;
@@ -153,6 +153,9 @@ export function validateFinanceMutation(actionValue: unknown, payloadValue: unkn
       result = { id: optionalId(), kind, title: text(p.title, "Title"), category: text(p.category, "Category", 80), expense_type: choice(p.expense_type ?? "bill", ["bill", "installment", "payment_plan"], "expense type"), amount_cents: cents(p.amount_cents, "Amount", 1), original_due_date: due, scheduled_date: scheduled, notes: text(p.notes, "Notes", 4000, false), frequency, end_date: end, ...custom, ...vendorLink(p), ...forecastFields(p, kind), ...tagLinks(p), scope };
       break;
     }
+    case "change_due_date":
+      result = { id: id(), original_due_date: financeDate(p.original_due_date, "Original due date"), scope: choice(p.scope ?? "single", ["single", "future"], "bill change scope") };
+      break;
     case "entry_status":
       result = { id: id(), status: choice(p.status, ["active", "cancelled"], "status"), scope };
       if (scope === "future" && (result.status !== "cancelled" || p.archived !== undefined)) return fail("Future bill changes can cancel this and later bills. Restore or archive one bill at a time.");

@@ -57,9 +57,12 @@ await db.exec(tagsMigration);
 const migratedTagsSnapshot=await snapshot();
 const recurringScopeMigration=await readFile(new URL('../migrations/20261115185530_finance_recurring_bill_scope.sql', import.meta.url), 'utf8');
 await db.exec(recurringScopeMigration);
+const dueDateMigration=await readFile(new URL('../migrations/20261119160000_finance_due_date_changes.sql', import.meta.url), 'utf8');
+await db.exec(dueDateMigration);
 async function one(sql, params = []) { return (await db.query(sql, params)).rows[0]; }
 async function mutate(action, payload, actor = owner, validate = true) {
   const p = validate ? validateFinanceMutation(action, payload).payload : payload;
+  if(action==='change_due_date') return (await one('select public.finance_change_due_date($1,$2::jsonb) result',[actor,JSON.stringify(p)])).result;
   const rpc=p.scope==='future'?'finance_mutate_recurring':'finance_mutate';
   return (await one(`select public.${rpc}($1,$2,$3::jsonb) result`,[actor,action,JSON.stringify(p)])).result;
 }
@@ -81,12 +84,12 @@ test('migrations are repeatable under Supabase default grants, all tables use RL
   await db.exec(readonlyMigration);
   await db.exec(customVendorsMigration);
   await db.exec(accountsMigration);
-  await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration);
+  await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration);
   assert.deepEqual((await db.query('select user_id from public.finance_access')).rows.map(r=>r.user_id), [owner]);
   const tables = (await db.query("select c.relname,c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relname like 'finance_%' and relkind='r'")).rows;
-  assert.equal(tables.length,18); assert.ok(tables.every(t=>t.relrowsecurity));
+  assert.equal(tables.length,19); assert.ok(tables.every(t=>t.relrowsecurity));
   const functions=(await db.query("select proname,prosecdef from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).rows;
-  assert.equal(functions.length,21); assert.ok(functions.every(f=>f.prosecdef===false));
+  assert.equal(functions.length,24); assert.ok(functions.every(f=>f.prosecdef===false));
   for (const role of ['anon','authenticated']) {
     assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and has_function_privilege($1,p.oid,'EXECUTE')",[role])).n,0);
   }
@@ -535,7 +538,7 @@ test('SQL rejects unsafe vendor URLs and treats SQL-like names and URLs as data'
 });
 
 test('custom/vendor migration can be reapplied with financial history and preserves private grants', async () => {
-  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); const after=await snapshot();
+  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); const after=await snapshot();
   assert.deepEqual(after,before);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_vendors','DELETE,TRUNCATE,TRIGGER,REFERENCES') granted")).granted,false);
@@ -550,7 +553,7 @@ test('account migration preserves legacy cash history and backfills reminders on
   assert.equal(p.account_id,null); assert.equal(p.payment_method,'manual'); assert.equal(p.amount_cents,2000);
   await mutate('save_entry',{...legacyBill,reminder_days:null});
   await mutate('save_entry',{...legacyIncome,reminder_days:5});
-  await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); s=await snapshot();
+  await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); s=await snapshot();
   assert.equal(s.entries.find(e=>e.id===legacyBill.id).reminder_days,null);
   assert.equal(s.entries.find(e=>e.id===legacyIncome.id).reminder_days,5);
   const a=account(); await mutate('save_account',a);
@@ -852,7 +855,7 @@ test('collection reversal restores cash to its recorded account even after the b
 });
 
 test('account migration is repeatable with posted cash and savings history, with least-privilege grants', async () => {
-  const before=await snapshot(); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); const after=await snapshot(); assert.deepEqual(after,before);
+  const before=await snapshot(); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); const after=await snapshot(); assert.deepEqual(after,before);
   for(const table of ['finance_accounts','finance_transfers','finance_savings_goals','finance_goal_history']) {
     assert.equal((await one("select has_table_privilege('service_role',$1,'DELETE,TRUNCATE,REFERENCES,TRIGGER') granted",[`public.${table}`])).granted,false,table);
   }
@@ -1003,8 +1006,8 @@ test('household labels never grant access or let another approved owner alter de
 });
 
 test('household migration is repeatable with assignments, shared collections and private grants intact', async () => {
-  const before=await snapshot(); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); assert.deepEqual(await snapshot(),before);
-  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,21);
+  const before=await snapshot(); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); assert.deepEqual(await snapshot(),before);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,24);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
 });
@@ -1215,9 +1218,9 @@ test('tag and recurrence failures leave no partial series, plans or altered fina
 });
 
 test('tag migration reapplication preserves quarterly schedules, archived links, customized installments and money', async () => {
-  const before=await snapshot(); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); assert.deepEqual(await snapshot(),before);
-  assert.equal((await one("select count(*)::int n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relname like 'finance_%'")).n,18);
-  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%'")).n,21);
+  const before=await snapshot(); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); assert.deepEqual(await snapshot(),before);
+  assert.equal((await one("select count(*)::int n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relname like 'finance_%'")).n,19);
+  assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%'")).n,24);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_tags','DELETE,TRUNCATE,REFERENCES,TRIGGER') granted")).granted,false);
 });
@@ -1392,4 +1395,41 @@ test('future scope enforces ownership, supported actions and private grants at t
   await db.exec('set role service_role');
   try { await mutate('save_entry',{...rows[1],title:'Service future edit',scope:'future'}); }
   finally { await db.exec('reset role'); }
+});
+
+
+test('changing one original due date preserves its recurrence slot and does not regenerate the old bill', async () => {
+  const original=entry({title:'Individual due date correction',frequency:'monthly',original_due_date:'2026-01-15',scheduled_date:'2026-01-15',end_date:'2026-04-15'});
+  await mutate('save_entry',original);
+  const before=await snapshot(owner,'2026-04-30'), anchor=before.entries.find(x=>x.id===original.id);
+  const feb=before.entries.find(x=>x.series_id===anchor.series_id && x.original_due_date==='2026-02-15');
+  await mutate('move_entry',{id:feb.id,scheduled_date:'2026-02-23'});
+  await mutate('change_due_date',{id:feb.id,original_due_date:'2026-02-20',scope:'single'});
+  const after=await snapshot(owner,'2026-05-31'), items=after.entries.filter(x=>x.series_id===anchor.series_id);
+  assert.equal(items.length,4);
+  assert.deepEqual(items.map(x=>x.original_due_date),['2026-01-15','2026-02-20','2026-03-15','2026-04-15']);
+  assert.equal(items.find(x=>x.id===feb.id).recurrence_slot_date,'2026-02-15');
+  assert.equal(items.find(x=>x.id===feb.id).scheduled_date,'2026-02-23','separate payment plan stays moved');
+  assert.equal((await one("select count(*)::integer count from public.finance_entries where series_id=$1",[anchor.series_id])).count,4);
+});
+
+test('changing this and future due dates preserves earlier and fully paid dates and updates future uncreated bills', async () => {
+  const original=entry({title:'Recurring due date correction',frequency:'monthly',original_due_date:'2026-01-15',scheduled_date:'2026-01-15',end_date:'2026-06-15'});
+  await mutate('save_entry',original);
+  const before=await snapshot(owner,'2026-03-31'), anchor=before.entries.find(x=>x.id===original.id);
+  const feb=before.entries.find(x=>x.series_id===anchor.series_id && x.original_due_date==='2026-02-15');
+  const march=before.entries.find(x=>x.series_id===anchor.series_id && x.original_due_date==='2026-03-15');
+  const receipt={id:randomUUID(),entry_id:feb.id,amount_cents:10000,paid_on:'2026-02-15'};
+  await mutate('record_payment',receipt);
+  await mutate('move_entry',{id:march.id,scheduled_date:'2026-03-27'});
+  await mutate('change_due_date',{id:feb.id,original_due_date:'2026-02-20',scope:'future'});
+  const after=await snapshot(owner,'2026-06-30');
+  const items=after.entries.filter(x=>x.series_id===anchor.series_id);
+  assert.deepEqual(items.map(x=>x.original_due_date),['2026-01-15','2026-02-15','2026-03-20','2026-04-20','2026-05-20','2026-06-20']);
+  assert.equal(items.find(x=>x.id===march.id).scheduled_date,'2026-03-27');
+  assert.equal(after.payments.find(x=>x.id===receipt.id).paid_on,'2026-02-15');
+  assert.equal((await one('select count(*)::integer count from public.finance_series_due_rules where series_id=$1',[anchor.series_id])).count,1);
+  await denied(()=>mutate('change_due_date',{id:march.id,original_due_date:'2026-04-07',scope:'future'}));
+  await denied(()=>mutate('change_due_date',{id:march.id,original_due_date:'2026-03-21',scope:'future'},secondOwner),'P0002');
+  assert.equal((await snapshot(owner,'2026-06-30')).entries.filter(x=>x.series_id===anchor.series_id).length,6);
 });
