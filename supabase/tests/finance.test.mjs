@@ -87,9 +87,9 @@ test('migrations are repeatable under Supabase default grants, all tables use RL
   await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration);
   assert.deepEqual((await db.query('select user_id from public.finance_access')).rows.map(r=>r.user_id), [owner]);
   const tables = (await db.query("select c.relname,c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relname like 'finance_%' and relkind='r'")).rows;
-  assert.equal(tables.length,18); assert.ok(tables.every(t=>t.relrowsecurity));
+  assert.equal(tables.length,19); assert.ok(tables.every(t=>t.relrowsecurity));
   const functions=(await db.query("select proname,prosecdef from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).rows;
-  assert.equal(functions.length,21); assert.ok(functions.every(f=>f.prosecdef===false));
+  assert.equal(functions.length,24); assert.ok(functions.every(f=>f.prosecdef===false));
   for (const role of ['anon','authenticated']) {
     assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and has_function_privilege($1,p.oid,'EXECUTE')",[role])).n,0);
   }
@@ -538,7 +538,7 @@ test('SQL rejects unsafe vendor URLs and treats SQL-like names and URLs as data'
 });
 
 test('custom/vendor migration can be reapplied with financial history and preserves private grants', async () => {
-  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); const after=await snapshot();
+  const before=await snapshot(); await db.exec(customVendorsMigration); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); const after=await snapshot();
   assert.deepEqual(after,before);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_vendors','DELETE,TRUNCATE,TRIGGER,REFERENCES') granted")).granted,false);
@@ -553,7 +553,7 @@ test('account migration preserves legacy cash history and backfills reminders on
   assert.equal(p.account_id,null); assert.equal(p.payment_method,'manual'); assert.equal(p.amount_cents,2000);
   await mutate('save_entry',{...legacyBill,reminder_days:null});
   await mutate('save_entry',{...legacyIncome,reminder_days:5});
-  await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); s=await snapshot();
+  await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); s=await snapshot();
   assert.equal(s.entries.find(e=>e.id===legacyBill.id).reminder_days,null);
   assert.equal(s.entries.find(e=>e.id===legacyIncome.id).reminder_days,5);
   const a=account(); await mutate('save_account',a);
@@ -855,7 +855,7 @@ test('collection reversal restores cash to its recorded account even after the b
 });
 
 test('account migration is repeatable with posted cash and savings history, with least-privilege grants', async () => {
-  const before=await snapshot(); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); const after=await snapshot(); assert.deepEqual(after,before);
+  const before=await snapshot(); await db.exec(accountsMigration); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); const after=await snapshot(); assert.deepEqual(after,before);
   for(const table of ['finance_accounts','finance_transfers','finance_savings_goals','finance_goal_history']) {
     assert.equal((await one("select has_table_privilege('service_role',$1,'DELETE,TRUNCATE,REFERENCES,TRIGGER') granted",[`public.${table}`])).granted,false,table);
   }
@@ -1006,7 +1006,7 @@ test('household labels never grant access or let another approved owner alter de
 });
 
 test('household migration is repeatable with assignments, shared collections and private grants intact', async () => {
-  const before=await snapshot(); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); assert.deepEqual(await snapshot(),before);
+  const before=await snapshot(); await db.exec(householdMigration); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); assert.deepEqual(await snapshot(),before);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%'")).n,21);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
   assert.equal((await one("select has_table_privilege('service_role','public.finance_access','INSERT,UPDATE,DELETE') granted")).granted,false);
@@ -1218,7 +1218,7 @@ test('tag and recurrence failures leave no partial series, plans or altered fina
 });
 
 test('tag migration reapplication preserves quarterly schedules, archived links, customized installments and money', async () => {
-  const before=await snapshot(); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); assert.deepEqual(await snapshot(),before);
+  const before=await snapshot(); await db.exec(tagsMigration); await db.exec(recurringScopeMigration); await db.exec(dueDateMigration); assert.deepEqual(await snapshot(),before);
   assert.equal((await one("select count(*)::int n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relname like 'finance_%'")).n,18);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%'")).n,21);
   assert.equal((await one("select count(*)::int n from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'finance_%' and (prosecdef or has_function_privilege('anon',p.oid,'EXECUTE') or has_function_privilege('authenticated',p.oid,'EXECUTE'))")).n,0);
