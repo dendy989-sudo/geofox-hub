@@ -44,6 +44,8 @@ for (const filename of ["20261105164728_private_finance_dashboard.sql", "2026110
 }
 const migration = await readFile(new URL("../migrations/20261118163746_private_tax_workspace.sql", import.meta.url), "utf8");
 await db.exec(migration);
+const crossMigration = await readFile(new URL("../migrations/20261119072500_taxes_statement_cross_years.sql",import.meta.url),"utf8");
+await db.exec(crossMigration);
 
 async function row(query, values = []) { return (await db.query(query, values)).rows[0]; }
 async function role(name, callback) {
@@ -84,6 +86,7 @@ function transaction(statementId, data = {}, extra = {}) {
 
 test("tax migration remains repeatable and both tables deny ordinary browser access", async () => {
   await db.exec(migration);
+  await db.exec(crossMigration);
   const tables = (await db.query("select relname,relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relname in ('tax_records','tax_audit')")).rows;
   assert.equal(tables.length, 2);
   assert.ok(tables.every(value => value.relrowsecurity));
@@ -284,4 +287,33 @@ test("existing tax-year records cannot move their history to a different year", 
   const year = await save({ id: randomUUID(), kind: "year", tax_year: 2019, title: "2019", data: { status: "needs_amendment" } });
   await denied(() => save({ id: year.id, version: year.version, kind: "year", tax_year: 2020, title: "2020", data: year.data }), ["22023"]);
   assert.equal((await row("select tax_year from public.tax_records where id=$1", [year.id])).tax_year, 2019);
+});
+
+test("one original can import across years and removing it archives rows in every year",async()=>{
+  const source=await save(statement({tax_year:2025,title:"January 2025 statement"}));
+  const december=transaction(source.id,{date:"2024-12-30",source_row:1},{tax_year:2024});
+  const january=transaction(source.id,{date:"2025-01-03",source_row:2},{tax_year:2025});
+  const committed=await commit(source,[december,january],"e".repeat(64));
+  assert.equal(committed.imported,2);
+  const sourceAfter=await row("select version,data from public.tax_records where id=$1",[source.id]);
+  assert.deepEqual([...sourceAfter.data.imported_years].sort(),[2024,2025]);
+  const prior=await snapshot(2024);
+  const later=await snapshot(2025);
+  assert.ok(prior.records.some(record=>record.id===december.id));
+  assert.ok(later.records.some(record=>record.id===january.id));
+  const removed=(await row("select public.taxes_remove_document($1,$2,$3) result",[owner,source.id,sourceAfter.version])).result;
+  assert.equal(removed.removed_transactions,2);
+  assert.equal((await row("select count(*)::int n from public.tax_records where archived and id=any($1::uuid[])",[[source.id,december.id,january.id]])).n,3);
+  assert.equal((await row("select count(*)::int n from public.tax_audit where action='archived' and record_id=any($1::uuid[])",[[source.id,december.id,january.id]])).n,3);
+  const after=await snapshot(2024);
+  assert.ok(!after.records.some(record=>record.id===december.id));
+});
+test("duplicate fingerprint lookup stays private and considers all years",async()=>{
+  const accountId=randomUUID();
+  await save({id:accountId,kind:"account",tax_year:null,title:"Synthetic checking",data:{institution:"Synthetic"}});
+  const fingerprint="f".repeat(64);
+  await save(transaction(null,{date:"2024-12-01",account_id:accountId,statement_id:null,source_row:undefined,fingerprint},{tax_year:2024}));
+  const results=await row("select public.taxes_find_duplicate_fingerprints($1,$2,$3,$4::text[]) matches",[owner,accountId,randomUUID(),[fingerprint,"b".repeat(64)]]);
+  assert.deepEqual(results.matches,[fingerprint]);
+  await role("authenticated",async()=>{await denied(()=>row("select public.taxes_find_duplicate_fingerprints($1,$2,$3,$4::text[])",[owner,accountId,randomUUID(),[fingerprint]]));});
 });

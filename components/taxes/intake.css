@@ -71,3 +71,27 @@
 @media (max-width: 1100px) { .tx-import-totals { grid-template-columns: repeat(2,minmax(0,1fr)); } .tx-statement-item { flex-wrap: wrap; } .tx-statement-item > .tx-actions { margin-left: 54px; } }
 @media (max-width: 650px) { .tx-intake-form { grid-template-columns: 1fr; gap: 14px; } .tx-chat-message { padding: 18px; } .tx-chat-user { margin-left: 3%; } .tx-chat-assistant { margin-right: 0; } .tx-assistant-intro { gap: 12px; } .tx-assistant-intro .tx-assistant-symbol { width: 40px; height: 40px; border-radius: 12px; } .tx-ai-proposal { padding: 13px; } .tx-assistant-questions li { flex-wrap: wrap; } .tx-assistant-questions li > span { flex-basis: 100%; } }
 @media (prefers-reduced-motion: reduce) { .tx-chat-history { scroll-behavior: auto; } }
+
+/* Monthly coverage represents the named original statement period, not transaction months. */
+.tx-month-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:7px; margin:14px 0; }
+.tx-month-cell { min-width:0; display:flex; flex-direction:column; align-items:center; gap:7px; padding:13px 4px; border:1px solid #dfe6e8; border-radius:10px; color:#84919b; background:transparent; cursor:pointer; }
+.tx-month-cell span {font-size:10px;font-weight:600;}
+.tx-month-cell strong {font-size:17px;line-height:1;}
+.tx-month-cell.on-file { background:#e5f4ed; border-color:#a5d5b9; color:#287b54; }
+.tx-month-cell.unverified { background:#fdf7e5; border-color:#e8d295; color:#9b7737; }
+.tx-month-cell:focus-visible {outline:2px solid #577bcd;outline-offset:2px;}
+.tx-statement-filters { display:flex; align-items:end; flex-wrap:wrap; gap:12px; padding-bottom:16px; border-bottom:1px solid #edf0f3; }
+.tx-statement-filters .tx-field { flex:1 1 170px; max-width:310px; }
+.tx-statement-filters > .tx-muted { margin-left:auto; padding-bottom:7px; }
+.tx-statement-month-edit { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:8px; color:#768692; font-size:10px; }
+.tx-statement-month-edit select { width:auto; max-width:155px; }
+.tx-danger {border-color:#efd6d4!important; color:#ab5955!important;}
+.tx-danger:hover {background:#fdf2f1!important;}
+.tx-year-allocation { padding:14px 16px; margin-bottom:16px; border:1px solid #d6e5ed; border-radius:11px; background:#f6fafc; color:#536b78; }
+.tx-year-allocation > strong {font-size:12px;}
+.tx-year-allocation > div {display:flex;flex-wrap:wrap;gap:8px;margin-top:9px;}
+.tx-year-allocation p {margin:9px 0 0;font-size:11px;line-height:1.6;}
+.tx-year-pill {padding:5px 10px;background:#e8f1f7;border-radius:999px;font-size:11px;font-weight:600;}
+.tx-cross-year {display:block;color:#5b8c72;margin-top:4px;font-weight:600;}
+@media(max-width:900px){.tx-month-grid{grid-template-columns:repeat(6,minmax(0,1fr));}}
+@media(max-width:420px){.tx-month-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}

@@ -39,7 +39,8 @@ export function parseBankDate(raw:string,format:"mdy"|"dmy"|"ymd"="mdy"):string 
   return result;
 }
 export function parseStatementCsv(text:string,year:number,mapping?:CsvMapping,forceMapping=false):{headers:string[];sample:string[][];suggested_mapping:Partial<CsvMapping>;needs_mapping:boolean;rows:ImportRow[];warnings:string[]} {
-  const csv=readCsv(text);if(csv.length<2)throw new Error("The CSV has no transaction rows.");
+  void year;
+   const csv=readCsv(text);if(csv.length<2)throw new Error("The CSV has no transaction rows.");
   let headerIndex=csv.findIndex((row,index)=>index<15&&Boolean(suggestCsvMapping(row).date)&&Boolean(suggestCsvMapping(row).description));
   if(headerIndex<0)headerIndex=0;
   const headers=csv[headerIndex].map(value=>value.trim());
@@ -54,7 +55,7 @@ export function parseStatementCsv(text:string,year:number,mapping?:CsvMapping,fo
   for(let index=headerIndex+1;index<csv.length;index++){
     const row=csv[index];if(row.length!==headers.length)throw new Error(`CSV row ${index+1} has a different number of columns. Check this row before importing.`);
     const date=parseBankDate(at(row,chosen.date),chosen.date_format);
-    if(Number(date.slice(0,4))!==year)throw new Error(`Row ${index+1} belongs to ${date.slice(0,4)}, not ${year}. Upload each tax year's rows separately.`);
+    // Keep all posted dates, including transactions from adjacent years in the same original.
     const description=at(row,chosen.description);if(!description)throw new Error(`CSV row ${index+1} needs a description.`);
     let amount:number;
     try{
