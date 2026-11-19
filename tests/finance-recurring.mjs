@@ -78,6 +78,36 @@ test("future edits and cancellations use the transactional recurrence RPC with t
   assert.equal(server.calls[0].parameters.p_payload.amount_cents, 13500);
 });
 
+test("original due date edits use a dedicated owner-scoped RPC for one or future bills", async () => {
+  const server = mutationServer();
+  for (const scope of ["single", "future"]) {
+    await server.api.mutateFinance(context, "change_due_date", {
+      id: entryId, original_due_date: "2026-11-22", scope,
+      user_id: otherOwner, series_id: seriesId, effective_from: "2000-01-01", paid_on: "2000-01-01",
+    });
+  }
+  assert.deepEqual(server.calls.map(call => call.name), ["finance_change_due_date", "finance_change_due_date"]);
+  for (const [index, call] of server.calls.entries()) {
+    assert.equal(call.parameters.p_actor, owner);
+    assert.equal(call.parameters.p_payload.scope, index === 0 ? "single" : "future");
+    assert.equal(call.parameters.p_payload.original_due_date, "2026-11-22");
+    assert.deepEqual(Object.keys(call.parameters.p_payload).sort(), ["id", "original_due_date", "scope"]);
+    assert.equal("p_action" in call.parameters, false);
+  }
+});
+
+test("changing a due date rejects malformed calendar dates, scopes and missing bill IDs", async () => {
+  const server = mutationServer();
+  for (const original_due_date of ["2026-02-30", "2101-01-01", "2026-11-99"]) {
+    await assert.rejects(server.api.mutateFinance(context, "change_due_date", { id: entryId, original_due_date, scope: "future" }), error => error.status === 400);
+  }
+  for (const scope of ["all", "future ", null, false]) {
+    await assert.rejects(server.api.mutateFinance(context, "change_due_date", { id: entryId, original_due_date: "2026-11-22", scope }), error => error.status === 400);
+  }
+  await assert.rejects(server.api.mutateFinance(context, "change_due_date", { original_due_date: "2026-11-22", scope: "single" }), error => error.status === 400);
+  assert.equal(server.calls.length, 0);
+});
+
 test("malformed scope is rejected before any privileged mutation, instead of silently becoming a single edit", async () => {
   const server = mutationServer();
   for (const scope of [null, "", "all", "Future", " future ", false, 0, [], {}, ["future"]]) {
