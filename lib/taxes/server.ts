@@ -5,7 +5,7 @@ import { requireFinanceContext } from "@/lib/finance/server";
 import { getHubService, HubError, type HubContext } from "@/lib/hub/server";
 import { applyRuleToTransaction, ruleMatches } from "./model";
 import { bulkTransactionData, merchantKey, specificMerchant, BULK_SCOPES } from "./bulk";
-import { TAX_CATEGORIES } from "./types";
+import { TAX_CATEGORIES, type TaxCategory } from "./types";
 import { validateTaxSave, yearSchema } from "./validation";
 import type { TaxRecord, TaxSave, TaxSnapshot, TransactionData } from "./types";
 
@@ -115,7 +115,7 @@ export async function mutateTax(context:HubContext,input:Record<string,unknown>)
       scope:z.enum(BULK_SCOPES),
       business_id:z.uuid().nullable().default(null),
       business_percent:z.number().min(0).max(100).default(0),
-      category:z.enum(TAX_CATEGORIES.map(item=>item.id) as [string,...string[]]).default("uncategorized"),
+      category:z.enum(TAX_CATEGORIES.map(item=>item.id) as [TaxCategory,...TaxCategory[]]).default("uncategorized"),
       remember_vendor:z.boolean().default(false),
     }).safeParse(input);
     if(!checked.success)return taxInputError(checked.error);
